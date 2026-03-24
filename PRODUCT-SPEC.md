@@ -73,7 +73,7 @@ A SaaS platform that helps GTM teams, indie hackers, and marketing agencies find
 ┌────────────────────┐  ┌────────────────────┐
 │  CRON WORKER:      │  │  CRON WORKER:      │
 │  Reddit Scanner    │  │  Weekly Digest     │
-│  (every 5 min)     │  │  (weekly)          │
+│  (every 15 min)    │  │  (weekly)          │
 │                    │  │                    │
 │  → Reddit API      │  │  → Claude API      │
 │  → Claude API      │  │  → Email Service   │
@@ -364,7 +364,7 @@ Step 4: Subreddit Selection (AI-suggested with health tags)
 ```
 
 **Empty states:**
-- No alerts yet: "Monitoring is active. We're scanning your subreddits every 5 minutes. You'll see relevant posts here as we find them."
+- No alerts yet: "Monitoring is active. We're scanning your subreddits every 15 minutes. You'll see relevant posts here as we find them."
 - No subreddits: Show onboarding wizard CTA
 - Scan paused (API error): "Alert scanning is temporarily paused. We're retrying automatically."
 
@@ -534,8 +534,8 @@ about your product category and has 15 active commenters.
 
 **Rate limit management:**
 - Track requests per minute globally
-- 1 request per subreddit per 5-min scan cycle
-- Budget: 500 subreddits max at 5-min cycles
+- 1 request per subreddit per 15-min scan cycle
+- Budget: 1500 subreddits max at 15-min cycles
 - On 429 response: exponential backoff (1s, 2s, 4s, 8s, max 60s)
 
 ### 6.2 Claude API (Anthropic)
@@ -560,7 +560,7 @@ about your product category and has 15 active commenters.
 
 ## 7. Background Workers (Cron Jobs)
 
-### 7.1 Reddit Scanner (every 5 minutes)
+### 7.1 Reddit Scanner (every 15 minutes)
 
 ```
 FOR each active monitored_subreddit:
@@ -643,7 +643,7 @@ FOR each user with active monitoring:
 - API budget: Reddit requests used / available
 
 **Health indicators:**
-- Scan cycle completing within 5-min window
+- Scan cycle completing within 15-min window
 - LLM error rate < 5%
 - Email delivery rate > 95%
 - Alert relevance feedback (future: user marks alert as relevant/irrelevant)

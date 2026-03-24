@@ -68,13 +68,13 @@ All share the same core pain: manually finding relevant conversations is slow, a
 - Single Next.js full-stack app for dashboard, API, and auth
 - Separate serverless cron workers (Inngest or Railway cron) for the scanning engine
 - Single repo — simple development, scanner runs independently from the web app
-- Scan frequency: **every 5 minutes** (within free Reddit API tier for up to ~500 monitored subreddits across all users)
+- Scan frequency: **every 15 minutes** (within free Reddit API tier for up to ~1500 monitored subreddits across all users)
 
 ## Core Data Model
 
 - **User** — account with email, auth credentials, plan tier. Each account tracks ONE business (website, description, ICPs, competitors). Multi-business/client support deferred to a later version.
 - **Business** — the user's business profile: website URL, description, ICPs, brand voice, competitor list. One per user for MVP. Design DB schema with `business_id` FK from day 1 for future multi-business support.
-- **MonitoredSubreddit** — subreddit tracked for the user's business, with relevance keywords, health assessment (Strong/Medium/Weak tag with parameter explanations). Scan frequency is system-determined (5 minutes), not user-configurable.
+- **MonitoredSubreddit** — subreddit tracked for the user's business, with relevance keywords, health assessment (Strong/Medium/Weak tag with parameter explanations). Scan frequency is system-determined (15 minutes), not user-configurable.
 - **Alert** — a discovered Reddit post/comment with priority score, relevance score, source subreddit, Reddit post ID, timestamp, delivery status, alert category (general / competitor-mention / high-intent)
 - **ThreadAnalysis** — AI-generated summary of a Reddit thread, includes extracted pain points, sentiment, key insights
 - **CommentDraft** — AI-generated response draft linked to an Alert, with approval state (pending/approved/rejected)
@@ -112,8 +112,8 @@ Example: "Moderation: **Medium** — 8 rules, allows helpful product mentions bu
 
 ### Feature 3: Alerting Engine (HERO)
 
-- **Scanning mechanism:** Poll Reddit API (`/r/{subreddit}/new.json`) every 5 minutes via cron worker. Use Reddit OAuth2 credentials (100 req/min rate limit).
-- **Rate limit budget:** 1 request per subreddit per 5-min cycle. At 100 req/min = 500 requests per 5-min window. Supports ~500 monitored subreddits across all users. Fixed 5-min cycles for MVP — optimize scheduling when user volume justifies it.
+- **Scanning mechanism:** Poll Reddit API (`/r/{subreddit}/new.json`) every 15 minutes via cron worker. Use Reddit OAuth2 credentials (100 req/min rate limit).
+- **Rate limit budget:** 1 request per subreddit per 15-min cycle. At 100 req/min = 1500 requests per 15-min window. Supports ~1500 monitored subreddits across all users with significant headroom. Fixed 15-min cycles for MVP — optimize scheduling when user volume justifies it.
 - **Smart Alert Prioritization:** Each post scored with a multi-factor priority score combining:
   - **Relevance** — LLM-scored match against user's keywords + ICP description
   - **Recency** — how fresh the post is (newer = higher priority)
@@ -183,7 +183,7 @@ Example: "Moderation: **Medium** — 8 rules, allows helpful product mentions bu
 
 - 5 paying customers within 60 days of launch
 - Agency contact converts to paying user (or articulates exactly why not)
-- Alert latency < 5 minutes from post creation to notification
+- Alert latency < 15 minutes from post creation to notification
 - Thread intelligence replaces copy-paste-to-ChatGPT workflow for at least one user
 - Monthly recurring revenue covers infrastructure costs within 90 days
 
