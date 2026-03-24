@@ -747,8 +747,19 @@ FOR each active monitored_subreddit (where status = 'active'):
      - intent_boost: +0.15 if intent regex matches
      - pass1_score = min(1.0, semantic_score + keyword_boost + intent_boost)
 
-  d. IF pass1_score >= 0.3 → pass to Pass 2
+  d. IF pass1_score >= 0.4 → pass to Pass 2
      ELSE → discard (not relevant)
+
+  Threshold rationale (0.4):
+  - Below 0.4 with no keyword/intent boost = weak semantic match, almost never relevant
+  - A keyword match (0.2) or intent signal (0.15) can lift a borderline semantic
+    score (0.2-0.25) above threshold — so boosted posts still pass
+  - Pure semantic matches need 0.4+ cosine similarity, which means clearly
+    related topics (not just tangential overlap)
+  - Going higher (0.5+) risks filtering complaint threads that describe the
+    exact pain point but don't use "looking for" language — high-value posts
+  - Monitor via `prefilter.scored` events: if >70% of posts pass, threshold
+    may be too loose; if <20% pass, may be too aggressive
 
   Model: all-MiniLM-L6-v2 (https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)
   - 80MB, runs on CPU, ~5ms per embedding
@@ -923,7 +934,7 @@ All queryable directly from Supabase:
 | Email delivery rate | `COUNT(email.sent) / (COUNT(email.sent) + COUNT(email.failed))` | <95% |
 | Reddit API error rate | `COUNT(reddit_api.error) per hour` | >10/hour |
 | Failover frequency | `COUNT(llm.failover) per hour` | >5/hour (indicates primary instability) |
-| Pass 1 filter rate | `COUNT(passed=true) / COUNT(*) WHERE event_type = 'prefilter.scored'` | Track — if >80% pass, filter too loose |
+| Pass 1 filter rate | `COUNT(passed=true) / COUNT(*) WHERE event_type = 'prefilter.scored'` | >70% pass = too loose, <20% pass = too aggressive |
 | Alert relevance | Future: user feedback on alert quality | — |
 | Avg time to first alert | `AVG(first_alert.created_at - user.onboarding.completed)` | >30 min |
 
