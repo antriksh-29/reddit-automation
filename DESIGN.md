@@ -78,8 +78,6 @@ All share the same core pain: manually finding relevant conversations is slow, a
 - **Alert** — a discovered Reddit post/comment with priority score, relevance score, source subreddit, Reddit post ID, timestamp, delivery status, alert category (general / competitor-mention / high-intent)
 - **ThreadAnalysis** — AI-generated summary of a Reddit thread, includes extracted pain points, sentiment, key insights
 - **CommentDraft** — AI-generated response draft linked to an Alert, with approval state (pending/approved/rejected)
-- **WeeklyDigest** — aggregated weekly summary per user: top threads, emerging pain points, competitor mentions, engagement opportunities
-
 ## Core Features
 
 ### Feature 1: AI-Powered Onboarding Wizard
@@ -147,17 +145,7 @@ Example: "Moderation: **Medium** — 8 rules, allows helpful product mentions bu
 - Competitor mentions surface as a distinct alert category — users can filter alert feed by "competitor-mention"
 - High-priority alert when someone asks "what's the best tool for X?" and a competitor is mentioned
 
-### Feature 7: Weekly Reddit Digest
-
-**Dashboard section:** A dedicated "This Week" section showing:
-- Top 5 most relevant threads discovered this week
-- Emerging pain points across monitored subreddits
-- Competitor mentions summary
-- Suggested engagement opportunities
-
-**Weekly email:** Sent once per week, summarizing the same content with links back to the dashboard for full details. Serves as retention infrastructure — re-engages users who stop checking the dashboard.
-
-### Feature 8: Landing Page
+### Feature 7: Landing Page
 
 - Clear "alerting + intelligence" positioning (not "another Reddit comment tool")
 - Hero section focused on speed-to-relevance value prop
@@ -226,7 +214,7 @@ Reach out to the agency contact AND displaced GummySearch users:
 |---|----------|--------|----------|
 | 1 | GummySearch refugee landing page section | S | ACCEPTED |
 | 2 | Chrome extension for inline thread analysis | M | DEFERRED |
-| 3 | Weekly Reddit Digest (dashboard + email) | S | ACCEPTED |
+| 3 | Weekly Reddit Digest (dashboard + email) | S | REMOVED — available natively on Reddit |
 | 4 | Subreddit Health Assessment (qualitative tags) | S | ACCEPTED |
 | 5 | Competitor Mention Tracking (auto + manual) | S | ACCEPTED |
 | 6 | Smart Alert Prioritization (multi-factor) | S | ACCEPTED |

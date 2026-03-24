@@ -71,17 +71,17 @@ A SaaS platform that helps GTM teams, indie hackers, and marketing agencies find
             ┌──────────┴──────────┐
             ▼                     ▼
 ┌────────────────────┐  ┌────────────────────┐
-│  CRON WORKER:      │  │  CRON WORKER:      │
-│  Reddit Scanner    │  │  Weekly Digest     │
-│  (every 15 min)    │  │  (weekly)          │
-│                    │  │                    │
-│  → Reddit API      │  │  → Claude API      │
-│  → Claude API      │  │  → Email Service   │
-│  → DB writes       │  │  → DB reads        │
-│  → Email Service   │  │                    │
-└────────────────────┘  └────────────────────┘
-         │                        │
-         ▼                        ▼
+│  CRON WORKER:      │
+│  Reddit Scanner    │
+│  (every 15 min)    │
+│                    │
+│  → Reddit API      │
+│  → Claude API      │
+│  → DB writes       │
+│  → Email Service   │
+└────────────────────┘
+         │
+         ▼
 ┌────────────────┐     ┌──────────────────┐
 │  Reddit API    │     │  Email Service   │
 │  (OAuth2)      │     │  (Resend)        │
@@ -202,23 +202,6 @@ tone            VARCHAR     (e.g., 'helpful', 'conversational', 'technical')
 rule_check      JSONB       (subreddit rules checked, any flags)
 approval_state  ENUM        ('pending', 'approved', 'rejected') DEFAULT 'pending'
 created_at      TIMESTAMP   DEFAULT NOW()
-```
-
-### weekly_digests
-```
-id              UUID        PRIMARY KEY
-business_id     UUID        FK → businesses.id
-week_start      DATE        NOT NULL
-week_end        DATE        NOT NULL
-top_threads     JSONB       (top 5 most relevant thread summaries)
-pain_points     JSONB       (emerging pain points across subreddits)
-competitor_mentions JSONB   (summary of competitor activity)
-engagement_opportunities JSONB
-email_sent      BOOLEAN     DEFAULT false
-email_sent_at   TIMESTAMP
-created_at      TIMESTAMP   DEFAULT NOW()
-
-UNIQUE(business_id, week_start)
 ```
 
 ---
@@ -343,17 +326,6 @@ Step 4: Subreddit Selection (AI-suggested with health tags)
 │  │  [Load more alerts...]                                    ││
 │  └───────────────────────────────────────────────────────────┘│
 │                                                               │
-│  ┌─── THIS WEEK ────────────────────────────────────────────┐│
-│  │                                                           ││
-│  │  📊 Weekly Summary (Mar 17-24)                            ││
-│  │  • 47 relevant posts found across 8 subreddits           ││
-│  │  • 5 competitor mentions detected                         ││
-│  │  • Top pain point: "manual reddit monitoring is slow"     ││
-│  │  • 3 high-intent opportunities identified                 ││
-│  │                                                           ││
-│  │  [View Full Digest →]                                     ││
-│  └───────────────────────────────────────────────────────────┘│
-│                                                               │
 │  ┌─── MONITORED SUBREDDITS ─────────────────────────────────┐│
 │  │  r/saas [Strong ●] · Last scan: 2 min ago · 12 alerts    ││
 │  │  r/startups [Medium ●] · Last scan: 2 min ago · 5 alerts ││
@@ -446,46 +418,7 @@ Step 4: Subreddit Selection (AI-suggested with health tags)
 
 **Important:** No auto-posting. User copies the text and posts manually on Reddit. The "Approve" button is for internal tracking (marking that the user used this draft).
 
-### 5.5 Weekly Digest Email
-
-**Template structure:**
-```
-Subject: Your Reddit Intelligence Digest — Week of Mar 17-24
-
-Hi {name},
-
-Here's what happened in your monitored subreddits this week:
-
-📊 BY THE NUMBERS
-• 47 relevant posts found
-• 5 competitor mentions
-• 3 high-intent opportunities
-
-🔥 TOP OPPORTUNITIES
-1. [Post title] — r/saas — 23 comments, competitor mentioned
-   [View in Dashboard →]
-2. [Post title] — r/startups — high intent, 12 upvotes
-   [View in Dashboard →]
-
-😣 EMERGING PAIN POINTS
-• "manual monitoring is too slow" (appeared in 3 threads)
-• "too many false alerts" (appeared in 2 threads)
-
-🏢 COMPETITOR ACTIVITY
-• [Competitor A] mentioned 3 times — sentiment: negative
-• [Competitor B] mentioned 2 times — sentiment: neutral
-
-💡 ENGAGEMENT SUGGESTION
-Consider responding to [specific thread] — it directly asks
-about your product category and has 15 active commenters.
-
-[Open Dashboard →]
-
-—
-{Product Name}
-```
-
-### 5.6 Settings Page
+### 5.5 Settings Page
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -508,7 +441,6 @@ about your product category and has 15 active commenters.
 │  NOTIFICATIONS                                                │
 │  Email alerts: [On ▼]                                        │
 │  Alert threshold: [High priority only ▼]                     │
-│  Weekly digest: [On ▼]                                       │
 │                                                               │
 │  ACCOUNT                                                      │
 │  Plan: Free tier                                             │
@@ -553,7 +485,6 @@ about your product category and has 15 active commenters.
 ### 6.3 Email Service (Resend recommended)
 
 - Alert emails: triggered per high-priority alert
-- Weekly digest: triggered by weekly cron job
 - Rate limit: sensible per-user cap (e.g., max 20 alert emails/day)
 
 ---
@@ -586,22 +517,6 @@ FOR each active monitored_subreddit:
 - Reddit API 403 (subreddit private/banned) → mark subreddit inactive, notify user
 - LLM timeout → skip scoring, still store post as "unscored" alert
 - LLM malformed response → fallback to keyword matching
-
-### 7.2 Weekly Digest Generator (every Monday 9am UTC)
-
-```
-FOR each user with active monitoring:
-  1. Query alerts from past 7 days
-  2. Group by category (general, competitor, high_intent)
-  3. Send to LLM (Sonnet) for digest generation:
-     - Top 5 most relevant threads
-     - Emerging pain points
-     - Competitor activity summary
-     - Engagement suggestions
-  4. Store in weekly_digests table
-  5. Send digest email
-  6. Update dashboard "This Week" section
-```
 
 ---
 
@@ -683,5 +598,5 @@ These decisions should be made during `/plan-eng-review` before implementation b
 4. **Email:** Resend vs. Postmark vs. SendGrid
 5. **Hosting:** Railway (everything) vs. Vercel (frontend) + Railway (workers)
 6. **LLM prompt templates:** Exact prompts for relevance scoring, health assessment, thread analysis, comment drafting
-7. **Data retention policy:** How long to keep alerts, analyses, digests
+7. **Data retention policy:** How long to keep alerts and analyses
 8. **Pricing tiers:** What features are free vs. paid, what are the limits
