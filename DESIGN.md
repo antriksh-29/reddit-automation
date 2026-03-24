@@ -147,16 +147,14 @@ Example: "Moderation: **Medium** — 8 rules, allows helpful product mentions bu
 
 ### Feature 7: Landing Page
 
-- Clear "alerting + intelligence" positioning (not "another Reddit comment tool")
-- Hero section focused on speed-to-relevance value prop
-- Feature sections for each pillar
-- **GummySearch alternative section** (lower on page): "Switching from GummySearch? Here's how [Product] picks up where they left off." Targets SEO traffic for "GummySearch alternative 2026."
+DEFERRED — will be picked up once the core platform is ready.
 
 ## Failure Modes
 
 - **Reddit API down/rate limited:** Scanner backs off with exponential retry. Alerts delayed, not lost. User sees "Alerts may be delayed" status.
 - **LLM API failure:** Raw thread content still shown. Analysis marked "pending" and retried. Relevance scoring falls back to keyword matching.
-- **Notification delivery failure:** Retried 3x with exponential backoff. Failed deliveries visible in dashboard.
+- **Notification delivery failure:** Retried 3x with exponential backoff. Handled silently — not surfaced to user on frontend.
+- **LLM API failure (primary):** Transparent failover to backup model (Claude ↔ OpenAI). Same system prompts.
 - **Subreddit goes private/banned mid-monitoring:** Mark as inaccessible, notify user, pause scanning for that subreddit.
 - **User's website unreachable during onboarding:** Gracefully fall back to manual entry.
 - **LLM returns malformed JSON for scoring:** Parse with fallback — extract score via regex if structured parsing fails.
@@ -185,7 +183,7 @@ Example: "Moderation: **Medium** — 8 rules, allows helpful product mentions bu
 ## Dependencies
 
 - Reddit API access (OAuth2 app registration) and compliance with terms of service
-- LLM API (Claude API) for thread analysis, relevance scoring, and comment drafting
+- LLM APIs: Claude (Anthropic) for relevance scoring, analysis, intelligence + OpenAI (ChatGPT) for comment drafting
 - Cloud infrastructure for continuous scanning (cron workers)
 - Authentication service (e.g., Clerk, Supabase Auth)
 - Email delivery service (e.g., Resend, Postmark)
