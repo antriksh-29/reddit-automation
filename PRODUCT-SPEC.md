@@ -1,6 +1,6 @@
 # Product Specification: Reddit Lead Intelligence Platform
 
-**Version:** 1.1 (MVP)
+**Version:** 1.2 (MVP)
 **Date:** 2026-03-24
 **Status:** Ready for Engineering Review
 **Purpose:** Complete product specification for engineering handover. Covers all features, user flows, data models, API integrations, and edge cases.
@@ -72,7 +72,7 @@ A SaaS platform that helps GTM teams, indie hackers, and marketing agencies find
 ┌────────────────────────────────────────────────────────────┐
 │  CRON WORKER: Reddit Scanner (every 15 min)                │
 │                                                             │
-│  Pass 1: Keyword/Regex pre-filter (zero LLM cost)          │
+│  Pass 1: Semantic + Keyword pre-filter (local model, free) │
 │  Pass 2: LLM relevance scoring (Haiku — filtered posts)    │
 │                                                             │
 │  → Reddit API   → Claude API (relevance, analysis)         │
@@ -137,10 +137,11 @@ avg_comments    FLOAT
 upvote_ratio    FLOAT
 rules_count     INTEGER
 rules_json      JSONB       (full rules from Reddit API)
-commercial_tolerance ENUM   ('strong', 'medium', 'weak')
 activity_tag    ENUM        ('strong', 'medium', 'weak')
 engagement_tag  ENUM        ('strong', 'medium', 'weak')
 moderation_tag  ENUM        ('strong', 'medium', 'weak')
+icp_relevance_tag ENUM      ('strong', 'medium', 'weak') — per-business, stored in monitored_subreddits
+recency_tag     ENUM        ('strong', 'medium', 'weak')
 overall_tag     ENUM        ('strong', 'medium', 'weak')
 health_details  JSONB       (per-parameter breakdown with explanations)
 category        VARCHAR     (e.g., 'engineering', 'sales', 'marketing', 'product', etc.)
@@ -148,7 +149,7 @@ last_refreshed  TIMESTAMP   DEFAULT NOW()
 created_at      TIMESTAMP   DEFAULT NOW()
 
 NOTE: Pre-seeded with ~500 popular subreddits across functions.
-      Refreshed every 1-2 months via background job.
+      Refreshed manually via Supabase + Claude Code every 1-2 months.
       New subreddits added on first user addition — cached from then on.
 ```
 
@@ -184,11 +185,9 @@ post_url        VARCHAR     NOT NULL
 post_created_at TIMESTAMP   NOT NULL
 upvotes         INTEGER     DEFAULT 0
 num_comments    INTEGER     DEFAULT 0
-relevance_score FLOAT       (0.0 - 1.0, from LLM)
-relevance_reasoning TEXT    (one-line LLM explanation for score)
 priority_score  FLOAT       (composite: weighted formula below)
 priority_level  ENUM        ('high', 'medium', 'low') — derived from priority_score
-priority_factors JSONB      (breakdown of each factor's contribution)
+priority_factors JSONB      (breakdown: {relevance, recency, velocity, intent})
 category        ENUM        ('general', 'competitor_mention', 'high_intent') DEFAULT 'general'
 email_status    ENUM        ('pending', 'sent', 'failed', 'skipped') DEFAULT 'pending'
 email_sent_at   TIMESTAMP
@@ -297,19 +296,21 @@ Step 2: Business Profile + Monitoring Setup (single page, all editable)
   │                                                         │
   │  SUBREDDITS TO MONITOR (max 15)                         │
   │  AI-suggested subreddits:                               │
-  │  ☑ r/saas          [Strong ●] (hover for details)      │
-  │  ☑ r/startups      [Medium ●] (hover for details)      │
-  │  ☐ r/smallbusiness [Weak ●]   (hover for details)      │
+  │  ☑ saas            [Strong ●] (hover for details)      │
+  │  ☑ startups        [Medium ●] (hover for details)      │
+  │  ☐ smallbusiness   [Weak ●]   (hover for details)      │
   │                                                         │
-  │  [+ Add subreddit manually]                             │
+  │  [+ Add subreddit]                                      │
   │  ┌─────────────────────────────┐                        │
-  │  │ r/customsubreddit           │                        │
+  │  │ customsubreddit             │  ← r/ added auto       │
   │  └─────────────────────────────┘                        │
   │  → Existence check + health assessment runs on add      │
   │                                                         │
   │  [Start Monitoring →]                                   │
   └─────────────────────────────────────────────────────────┘
 ```
+
+**Subreddit input UX:** User types only the subreddit name (e.g., "saas", "startups"). The `r/` prefix is added automatically by the UI. Displayed as `r/saas` throughout the platform.
 
 **Health details on hover (not expanded by default):**
 ```
@@ -319,8 +320,6 @@ Step 2: Business Profile + Monitoring Setup (single page, all editable)
   │  PRIMARY FACTORS                           │
   │  Activity Level:        Strong — 45/day    │
   │  ICP Relevance:         Strong — 85% match │
-  │  Commercial Tolerance:  Medium — helpful    │
-  │                         mentions OK         │
   │                                            │
   │  SECONDARY FACTORS                         │
   │  Engagement Quality:    Strong — 72% deep  │
@@ -331,8 +330,8 @@ Step 2: Business Profile + Monitoring Setup (single page, all editable)
 
 **Subreddit validation on add:**
 1. Hit Reddit API `/r/{subreddit}/about.json`
-2. If 404 → show inline error: "r/example does not exist. Check the spelling."
-3. If 403 (private) → show: "r/example is a private subreddit and cannot be monitored."
+2. If 404 → show inline error: "This subreddit does not exist. Check the spelling."
+3. If 403 (private) → show: "This subreddit is private and cannot be monitored."
 4. If 200 → check `subreddit_health_cache`. If not cached, run health assessment and cache it.
 
 **Edge cases:**
@@ -346,7 +345,7 @@ Step 2: Business Profile + Monitoring Setup (single page, all editable)
 **Immediately after onboarding completes:**
 1. Trigger an initial scan for the user's configured subreddits + keywords
 2. Filter: posts from the **last 24 hours** only
-3. Run the two-pass relevance pipeline (keyword pre-filter → Haiku scoring)
+3. Run the two-pass relevance pipeline (semantic pre-filter → Haiku scoring)
 4. Populate dashboard with results — user sees relevant posts immediately, not a blank dashboard
 
 **Cron alignment:** If the first scan completes at 5:17 PM, schedule the user's first cron scan at 5:45 PM (next 15-min boundary, rounded up). From there, scan every 15 minutes on schedule.
@@ -360,7 +359,7 @@ Step 2: Business Profile + Monitoring Setup (single page, all editable)
 - Product: r/ProductManagement, r/UXDesign, r/startups, etc.
 - Industry-specific: r/fintech, r/healthIT, r/legaltech, etc.
 
-**Refresh cadence:** Background job runs every 60 days to re-assess all cached subreddits.
+**Refresh cadence:** Manual refresh via Supabase + Claude Code every 1-2 months. No automated cron job for this — handled by the founder directly.
 
 **New subreddit flow:** When a user adds a subreddit not in the cache:
 1. Validate existence (Reddit API)
@@ -371,36 +370,54 @@ This minimizes Reddit API calls — most subreddits will already be cached.
 
 **Health Assessment Parameters:**
 
-| Parameter | Type | Data Source | Strong | Medium | Weak |
-|-----------|------|-----------|--------|--------|------|
-| Activity Level | PRIMARY | Reddit API: posts/day, comments/post | >20 posts/day, >5 comments/post avg | 5-20 posts/day, 2-5 comments/post | <5 posts/day or <2 comments/post |
-| ICP Relevance | PRIMARY | LLM scoring against ICP description | >80% topic overlap with ICP | 50-80% overlap | <50% overlap |
-| Commercial Tolerance | PRIMARY | Rules analysis via LLM | No anti-promo rules, product mentions welcome | Allows helpful mentions, bans direct promotion | Explicit anti-commercial rules, bans product links |
-| Engagement Quality | SECONDARY | Reddit API: upvote ratios, discussion depth | >70% posts get 3+ comments | 40-70% get 3+ comments | <40% get 3+ comments |
-| Moderation Strictness | SECONDARY | Reddit API: /about/rules.json | <5 rules, no automod mention | 5-10 rules, moderate policies | >10 rules, strict automod, frequent removals |
-| Conversation Recency | SECONDARY | Reddit API: relevant posts in 7d vs 30d | Increasing trend, >5 relevant/week | Stable, 2-5 relevant/week | Declining or <2 relevant/week |
+| Parameter | Type | What it measures | Data Source | Strong | Medium | Weak |
+|-----------|------|-----------------|-----------|--------|--------|------|
+| Activity Level | PRIMARY | How active the subreddit is — volume of new posts and comments per day. Higher activity = more opportunities to find relevant threads. | Reddit API: posts/day, comments/post | >20 posts/day, >5 comments/post avg | 5-20 posts/day, 2-5 comments/post | <5 posts/day or <2 comments/post |
+| ICP Relevance | PRIMARY | How well the subreddit's audience and topics match the user's ideal customer profile. A high ICP match means the people posting here are likely the user's target customers. | LLM scoring against ICP description | >80% topic overlap with ICP | 50-80% overlap | <50% overlap |
+| Engagement Quality | SECONDARY | How deep the discussions are — do posts generate real conversations or just drive-by upvotes? Deep engagement means more insights from thread analysis. | Reddit API: upvote ratios, discussion depth | >70% posts get 3+ comments | 40-70% get 3+ comments | <40% get 3+ comments |
+| Moderation Strictness | SECONDARY | How heavily moderated the subreddit is — number of rules, automod presence, and how aggressively content is removed. Strict moderation means higher bar for comment drafts. | Reddit API: /about/rules.json | <5 rules, no automod mention | 5-10 rules, moderate policies | >10 rules, strict automod, frequent removals |
+| Conversation Recency | SECONDARY | Whether ICP-relevant conversations are happening recently and trending up or down. A declining subreddit may not be worth monitoring even if historically relevant. | Reddit API: relevant posts in 7d vs 30d | Increasing trend, >5 relevant/week | Stable, 2-5 relevant/week | Declining or <2 relevant/week |
 
 **Overall Ranking Formula:**
 - Score each parameter: Strong=3, Medium=2, Weak=1
 - Primary parameters weighted 2x, Secondary weighted 1x
-- Max possible score = (3 × 3 × 2) + (3 × 3 × 1) = 18 + 9 = 27
-- **Strong overall:** 22-27 | **Medium overall:** 15-21 | **Weak overall:** <15
+- Max possible score = (2 × 3 × 2) + (3 × 3 × 1) = 12 + 9 = 21
+- **Strong overall:** 17-21 | **Medium overall:** 11-16 | **Weak overall:** <11
 
 ### 5.2 Dashboard
 
 **Layout:**
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  [Logo]  Dashboard | Threads | Drafts | Settings    [User ▼] │
+│  [Logo]  Dashboard | Thread Analysis | Settings     [User ▼] │
 ├──────────────────────────────────────────────────────────────┤
 │                                                               │
-│  ┌─── FILTERS & SORT ─────────────────────────────────────┐ │
-│  │  View: [New ▼] [Seen ▼]                                 │ │
-│  │  Subreddit: [All ▼]  Priority: [All ▼]                  │ │
-│  │  Category: [All ▼] [Competitor] [High Intent] [General] │ │
-│  │  Date: [Today ▼] [Yesterday] [This Week] [This Month]   │ │
-│  │        [Custom Range: _____ to _____]                    │ │
-│  │  Sort by: [Priority ▼] [Newest] [Most Comments]         │ │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │  [Filter by ▼]                    [Sort by ▼]           │ │
+│  │                                                          │ │
+│  │  Filter by (hover to expand):                            │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐             │ │
+│  │  │ View             │  │ Priority         │             │ │
+│  │  │  ○ New           │  │  ○ All           │             │ │
+│  │  │  ○ Seen          │  │  ○ High          │             │ │
+│  │  │  ○ All           │  │  ○ Medium        │             │ │
+│  │  └──────────────────┘  │  ○ Low           │             │ │
+│  │  ┌──────────────────┐  └──────────────────┘             │ │
+│  │  │ Subreddit        │  ┌──────────────────┐             │ │
+│  │  │  ☐ r/saas        │  │ Date Range       │             │ │
+│  │  │  ☐ r/startups    │  │  ○ Today         │             │ │
+│  │  │  ☐ r/indiehackers│  │  ○ Yesterday     │             │ │
+│  │  └──────────────────┘  │  ○ This Week     │             │ │
+│  │  ┌──────────────────┐  │  ○ This Month    │             │ │
+│  │  │ Category         │  │  ○ Custom Range  │             │ │
+│  │  │  ○ All           │  └──────────────────┘             │ │
+│  │  │  ○ Competitor    │                                    │ │
+│  │  │  ○ High Intent   │  Sort by (hover to expand):       │ │
+│  │  │  ○ General       │  ┌──────────────────┐             │ │
+│  │  └──────────────────┘  │  ○ Priority      │             │ │
+│  │                         │  ○ Newest        │             │ │
+│  │  (selected filters      │  ○ Most Comments │             │ │
+│  │   remain highlighted)   └──────────────────┘             │ │
 │  └──────────────────────────────────────────────────────────┘│
 │                                                               │
 │  ┌─── NEW ALERTS (3) ─────────────────────────────────────┐ │
@@ -408,16 +425,14 @@ This minimizes Reddit API calls — most subreddits will already be cached.
 │  │  ┌─────────────────────────────────────────────────┐     ││
 │  │  │ 🔴 HIGH · r/saas · 3 min ago                     │     ││
 │  │  │ "Looking for alternatives to [Competitor]"       │     ││
-│  │  │ Relevance: 0.92 · Competitor mention             │     ││
-│  │  │ 12 upvotes · 8 comments · Rising fast            │     ││
+│  │  │ Competitor mention · 12 upvotes · 8 comments     │     ││
 │  │  │ [Analyze Thread] [Draft Response] [View on Reddit]│    ││
 │  │  └─────────────────────────────────────────────────┘     ││
 │  │                                                           ││
 │  │  ┌─────────────────────────────────────────────────┐     ││
 │  │  │ 🟡 MEDIUM · r/startups · 12 min ago              │     ││
 │  │  │ "Best tools for early-stage customer discovery"  │     ││
-│  │  │ Relevance: 0.74 · High intent                    │     ││
-│  │  │ 5 upvotes · 3 comments                           │     ││
+│  │  │ High intent · 5 upvotes · 3 comments             │     ││
 │  │  │ [Analyze Thread] [Draft Response] [View on Reddit]│    ││
 │  │  └─────────────────────────────────────────────────┘     ││
 │  │                                                           ││
@@ -439,6 +454,10 @@ This minimizes Reddit API calls — most subreddits will already be cached.
 └──────────────────────────────────────────────────────────────┘
 ```
 
+**Filter & Sort UX:** "Filter by" and "Sort by" are two separate buttons. Hovering over each reveals a dropdown with options. Selected options remain visually highlighted (e.g., pill/chip style). Multiple filters can be active simultaneously. Clicking a selected filter deselects it.
+
+**Alert cards:** Show priority level, subreddit, time ago, title, category tag, upvotes, comments. No relevance score shown to user — priority encompasses everything.
+
 **Alert seen tracking:** An alert transitions from "New" to "Seen" when it is visible on the user's dashboard viewport (use intersection observer on the frontend). Update `is_seen=true` and `seen_at=NOW()` via API call.
 
 **Empty states:**
@@ -448,79 +467,87 @@ This minimizes Reddit API calls — most subreddits will already be cached.
 
 **Subreddit goes private:** Shown in the monitored subreddits section with a 🔒 icon and "Paused" status. Scanning pauses automatically. If the subreddit becomes public again, scanning resumes. User can remove it anytime.
 
-### 5.3 Thread Analysis View (Chat Interface)
+**Navigation:** Top nav has 3 items: Dashboard, Thread Analysis, Settings. No separate "Drafts" page — drafts are accessed contextually from alerts/thread analysis.
 
-**Trigger:** User clicks "Analyze Thread" on an alert, OR manually enters a Reddit URL.
+### 5.3 Thread Analysis View (Chat Interface with Sidebar History)
 
-**Full thread display:** The platform fetches and displays the complete thread (post + all comments) so users can read everything without leaving the platform. Uses Reddit comments API (`GET /comments/{article_id}.json`). Comments displayed in threaded/nested format matching Reddit's layout.
+**Trigger:** User clicks "Analyze Thread" on an alert, OR enters a Reddit URL **on this page only** (manual URL input is restricted to the Thread Analysis page).
 
-**Initial analysis displayed as first chat message:**
+**Layout:** Chat-style interface. Left sidebar shows history of all past analyses (like ChatGPT sidebar). Main area shows the current analysis + chat.
+
+**Thread display:** Show the post title, author, subreddit, time, upvotes/comments summary, and a brief snippet (same card format as dashboard). Link to full thread on Reddit — do NOT display the full thread/comments on our platform.
+
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  Thread Analysis — Chat                                       │
-│  r/saas · Posted 2 hours ago by u/founder123                 │
-│  "Looking for alternatives to [Competitor] - too expensive"  │
-├──────────────────────────────────────────────────────────────┤
-│                                                               │
-│  ┌─ FULL THREAD ──────────────────────────────────────────┐ │
-│  │  [Original post content displayed here]                  │ │
-│  │                                                          │ │
-│  │  └─ u/user1: "I switched to X and it's much better"     │ │
-│  │     └─ u/user2: "How's their pricing?"                   │ │
-│  │  └─ u/user3: "The real issue is the lack of..."          │ │
-│  │  └─ u/user4: "Looking for the same thing..."             │ │
-│  │  [Show all 23 comments]                                  │ │
-│  └──────────────────────────────────────────────────────────┘│
-│                                                               │
-│  ┌─ AI ANALYSIS ──────────────────────────────────────────┐ │
-│  │  📝 SUMMARY                                              │ │
-│  │  The author is frustrated with [Competitor]'s pricing    │ │
-│  │  after a recent 40% price increase...                    │ │
-│  │                                                          │ │
-│  │  😣 PAIN POINTS                                          │ │
-│  │  • Price increase making current tool unaffordable       │ │
-│  │  • Lack of real-time alerting in current tool            │ │
-│  │  • Too much noise in alerts — want better filtering      │ │
-│  │                                                          │ │
-│  │  💡 KEY INSIGHTS                                          │ │
-│  │  • 3 commenters mention needing "instant alerts"         │ │
-│  │  • 2 users specifically ask about thread analysis        │ │
-│  │                                                          │ │
-│  │  🎯 BUYING INTENT SIGNALS                                │ │
-│  │  • u/user4: "Looking for the same thing, budget ~$50/mo" │ │
-│  │  • u/user1: "I switched to X" — active solution seeker  │ │
-│  │                                                          │ │
-│  │  🏢 COMPETITIVE LANDSCAPE                                │ │
-│  │  • [Competitor A]: mentioned 3x, sentiment negative      │ │
-│  │    (price complaints, feature gaps)                      │ │
-│  │  • [Competitor B]: mentioned 1x, sentiment neutral       │ │
-│  │  • Users wish: better pricing, real-time features        │ │
-│  │                                                          │ │
-│  │  📊 SENTIMENT: Mixed (leaning negative toward incumbents)│ │
-│  │  🏷 COMMENTS ANALYZED: 23 of 23 (complete)               │ │
-│  └──────────────────────────────────────────────────────────┘│
-│                                                               │
-│  ┌──────────────────────────────────────────────────────────┐│
-│  │  💬 Ask a follow-up question about this thread...         ││
-│  │  ┌──────────────────────────────────────────────────┐    ││
-│  │  │ What are the top 3 opportunities for us here?    │    ││
-│  │  └──────────────────────────────────────────────────┘    ││
-│  │  [Send]                                                   ││
-│  └──────────────────────────────────────────────────────────┘│
-│                                                               │
-│  [Draft a Response] [View on Reddit]                         │
-└──────────────────────────────────────────────────────────────┘
+│  Thread Analysis                                              │
+├────────────┬─────────────────────────────────────────────────┤
+│            │                                                  │
+│  HISTORY   │  ┌─ POST SUMMARY ─────────────────────────────┐│
+│  (sidebar) │  │  r/saas · 2 hours ago · u/founder123       ││
+│            │  │  "Looking for alternatives to [Competitor]"  ││
+│  Today     │  │  12 upvotes · 8 comments                    ││
+│  ○ Looking │  │  [View full thread on Reddit →]              ││
+│    for alt │  └──────────────────────────────────────────────┘│
+│  ○ Best    │                                                  │
+│    tools   │  ┌─ AI ANALYSIS ──────────────────────────────┐│
+│            │  │  📝 SUMMARY                                  ││
+│  Yesterday │  │  The author is frustrated with [Competitor]  ││
+│  ○ Reddit  │  │  after a recent 40% price increase...       ││
+│    market  │  │                                              ││
+│  ○ How to  │  │  😣 PAIN POINTS                              ││
+│    grow    │  │  • Price increase unaffordable               ││
+│            │  │  • Lack of real-time alerting                ││
+│  This Week │  │  • Too much noise in alerts                  ││
+│  ○ ...     │  │                                              ││
+│            │  │  💡 KEY INSIGHTS                              ││
+│  ──────────│  │  • 3 commenters need "instant alerts"        ││
+│            │  │  • 2 users ask about thread analysis         ││
+│  [+ New    │  │                                              ││
+│  Analysis] │  │  🎯 BUYING INTENT SIGNALS                    ││
+│            │  │  • u/user4: "budget ~$50/mo"                 ││
+│  Paste URL:│  │  • u/user1: active solution seeker           ││
+│  [________]│  │                                              ││
+│  [Analyze] │  │  🏢 COMPETITIVE LANDSCAPE                    ││
+│            │  │  • [Competitor A]: 3x, negative sentiment    ││
+│            │  │  • [Competitor B]: 1x, neutral               ││
+│            │  │                                              ││
+│            │  │  📊 SENTIMENT: Mixed (negative toward        ││
+│            │  │     incumbents)                               ││
+│            │  │  🏷 COMMENTS ANALYZED: 23 of 23              ││
+│            │  └──────────────────────────────────────────────┘│
+│            │                                                  │
+│            │  ┌─ SUGGESTED QUESTIONS ────────────────────────┐│
+│            │  │  [What opportunities exist for us here?]     ││
+│            │  │  [Which commenters are potential customers?]  ││
+│            │  │  [What features are users asking for?]       ││
+│            │  │  [How should we position against competitors?]││
+│            │  └──────────────────────────────────────────────┘│
+│            │                                                  │
+│            │  ┌──────────────────────────────────────────────┐│
+│            │  │  💬 Ask a follow-up question...               ││
+│            │  │  ┌──────────────────────────────────────┐    ││
+│            │  │  │                                      │    ││
+│            │  │  └──────────────────────────────────────┘    ││
+│            │  │  [Send]                                       ││
+│            │  └──────────────────────────────────────────────┘│
+│            │                                                  │
+│            │  [Draft a Response] [View on Reddit]             │
+└────────────┴─────────────────────────────────────────────────┘
 ```
 
-**Chat functionality:** After the initial analysis, users can ask follow-up questions about the thread in a chat interface (LLM-first text interface). The thread content + analysis serve as context. Examples:
-- "What specific features are users asking for?"
-- "Which commenter seems most likely to be a potential customer?"
-- "Summarize what u/user3 is saying across their comments"
-- "What's the competitive angle I should focus on?"
+**Suggested questions:** 4 pre-built questions shown as clickable chips below the analysis. User can click one instead of typing. These adapt based on thread content (e.g., if competitors are mentioned, suggest a competitive positioning question).
 
-Chat messages stored in `thread_chat_messages` table. Thread content + previous messages included as context for each new message.
+Default suggestions:
+1. "What opportunities exist for us in this thread?"
+2. "Which commenters are potential customers?"
+3. "What specific features are users asking for?"
+4. "How should we position against the competitors mentioned?"
 
-**Manual URL input:** Any page in the app should have a way to paste a Reddit thread URL for ad-hoc analysis (even threads not in monitored subreddits).
+**Sidebar history:** All past thread analyses are saved and accessible via the left sidebar, grouped by date (Today, Yesterday, This Week, Earlier). Clicking a past analysis loads it with its full chat history. Works exactly like ChatGPT's sidebar.
+
+**Manual URL input:** Located in the left sidebar below the history. User pastes a Reddit URL and clicks Analyze. This is the **only** place in the app where manual URL input is available.
+
+**Chat functionality:** After the initial analysis, users can ask follow-up questions. Thread content + analysis + previous messages included as context for each new message. Chat messages stored in `thread_chat_messages` table.
 
 ### 5.4 Comment Drafting View
 
@@ -559,7 +586,7 @@ Chat messages stored in `thread_chat_messages` table. Thread content + previous 
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Key changes from v1.0:**
+**Key behaviors:**
 - **Per-draft [Regenerate]** — regenerates only that specific draft, not the whole page
 - **[Edit] includes write-your-own** — clicking Edit opens the draft text as editable. User can modify or replace entirely. No separate "Write My Own" CTA needed.
 - **No "Rule check: PASS" display** — subreddit rules are shown at the top for context. Rule checking happens internally but the pass/fail badge is not shown (redundant noise).
@@ -567,65 +594,61 @@ Chat messages stored in `thread_chat_messages` table. Thread content + previous 
 
 **Important:** No auto-posting. User copies the text and posts manually on Reddit. The "Approve" button is for internal tracking (marking that the user used this draft).
 
-### 5.5 Settings Page (Tabbed)
+### 5.5 Settings Page (Sidebar Tabs)
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  Settings                                                     │
-├──────────────────────────────────────────────────────────────┤
-│                                                               │
-│  [Business Profile] [Notifications] [Usage & Billing]        │
-│  ─────────────────────────────────────────────────────────── │
-│                                                               │
-│  ┌─── BUSINESS PROFILE TAB ──────────────────────────────┐  │
-│  │                                                        │  │
-│  │  Current Business: [Example Inc ▼]                     │  │
-│  │  (MVP: 1 business only. Multi-business coming soon.)   │  │
-│  │                                                        │  │
-│  │  Business Name: [_____________]                        │  │
-│  │  Website: [_____________]                              │  │
-│  │  Description: [_____________] (editable)               │  │
-│  │  Target Audience: [_____________]                       │  │
-│  │  Brand Voice: [_____________]                          │  │
-│  │                                                        │  │
-│  │  ICP Description: [_____________] (add/delete)         │  │
-│  │  Keywords: [keyword1 ✕] [keyword2 ✕] [+ add]          │  │
-│  │  Competitors: [Comp A ✕] [Comp B ✕] [+ add]           │  │
-│  │  Subreddits: [r/saas ✕ Strong●] [r/startups ✕ Med●]   │  │
-│  │              [+ add] (5/15 used)                       │  │
-│  │              (hover subreddit tag for health details)   │  │
-│  │                                                        │  │
-│  │  [Save Changes]                                        │  │
-│  └────────────────────────────────────────────────────────┘  │
-│                                                               │
-│  ┌─── NOTIFICATIONS TAB ─────────────────────────────────┐  │
-│  │                                                        │  │
-│  │  Email alerts: [On ▼]                                  │  │
-│  │  Alert threshold: [High priority only ▼]               │  │
-│  │    Options: All alerts / High + Medium / High only     │  │
-│  │                                                        │  │
-│  │  [Save Changes]                                        │  │
-│  └────────────────────────────────────────────────────────┘  │
-│                                                               │
-│  ┌─── USAGE & BILLING TAB ───────────────────────────────┐  │
-│  │                                                        │  │
-│  │  Plan: Free tier                                       │  │
-│  │  Subreddits: 5/15 used                                 │  │
-│  │  Alerts this month: 147                                │  │
-│  │  Thread analyses this month: 23                        │  │
-│  │  Drafts generated this month: 12                       │  │
-│  │                                                        │  │
-│  │  [Upgrade to Pro →]                                    │  │
-│  │  [Delete Account]                                      │  │
-│  └────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────┘
+├────────────┬─────────────────────────────────────────────────┤
+│            │                                                  │
+│  SECTIONS  │  ┌─── BUSINESS PROFILE ──────────────────────┐ │
+│  (sidebar) │  │                                            │ │
+│            │  │  Current Business: [Example Inc ▼]         │ │
+│  ● Business│  │  (MVP: 1 business. Multi-business soon.)   │ │
+│    Profile │  │                                            │ │
+│            │  │  Business Name: [_____________]            │ │
+│  ○ Notifi- │  │  Website: [_____________]                  │ │
+│    cations │  │  Description: [_____________] (editable)   │ │
+│            │  │  Target Audience: [_____________]           │ │
+│  ○ Usage & │  │  Brand Voice: [_____________]              │ │
+│    Billing │  │                                            │ │
+│            │  │  ICP Description: [_____________]          │ │
+│            │  │  Keywords: [kw1 ✕] [kw2 ✕] [+ add]       │ │
+│            │  │  Competitors: [Comp A ✕] [+ add]          │ │
+│            │  │  Subreddits:                               │ │
+│            │  │    [saas ✕ Strong●] [startups ✕ Med●]     │ │
+│            │  │    [+ add] (5/15 used)                    │ │
+│            │  │    (hover tag for health details)          │ │
+│            │  │                                            │ │
+│            │  │  [Save Changes]                            │ │
+│            │  └────────────────────────────────────────────┘ │
+│            │                                                  │
+├────────────┼─────────────────────────────────────────────────┤
+│            │  ┌─── NOTIFICATIONS ─────────────────────────┐ │
+│  (when     │  │                                            │ │
+│  selected) │  │  Email alerts: [On ▼]                      │ │
+│            │  │  Alert threshold: [High priority only ▼]   │ │
+│            │  │    Options: All / High + Medium / High only │ │
+│            │  │                                            │ │
+│            │  │  [Save Changes]                            │ │
+│            │  └────────────────────────────────────────────┘ │
+│            │                                                  │
+├────────────┼─────────────────────────────────────────────────┤
+│            │  ┌─── USAGE & BILLING ───────────────────────┐ │
+│  (when     │  │                                            │ │
+│  selected) │  │  Coming soon.                              │ │
+│            │  │                                            │ │
+│            │  └────────────────────────────────────────────┘ │
+└────────────┴─────────────────────────────────────────────────┘
 ```
 
-**Settings structure:** Tabbed navigation with 3 tabs. Business Profile tab accommodates future multi-business support via a business selector dropdown at the top (shows only one business in MVP but the UI pattern is ready for expansion).
+**Layout:** Left sidebar navigation with 3 sections. Active section highlighted. Content area on the right shows the selected section.
 
-**Subreddit health on hover:** Health assessment details shown only when user hovers over a subreddit name/tag — not expanded by default.
+**Subreddit input:** User types only the name (e.g., "saas"). The `r/` prefix is shown automatically. Health details shown only on hover.
 
-**Add/Delete for dynamic fields:** ICP, Keywords, Competitors, and Subreddits all support manual add and delete operations. Description and Brand Voice are free-text editable fields.
+**Add/Delete for dynamic fields:** ICP, Keywords, Competitors, and Subreddits all support manual add and delete. Description and Brand Voice are free-text editable.
+
+**Usage & Billing:** Placeholder for now — will be defined later once pricing is finalized.
 
 ---
 
@@ -640,13 +663,13 @@ Chat messages stored in `thread_chat_messages` table. Thread content + previous 
   - `GET /r/{subreddit}/new.json` — fetch new posts (scanner)
   - `GET /r/{subreddit}/about/rules.json` — fetch subreddit rules
   - `GET /r/{subreddit}/about.json` — subreddit metadata (for health assessment + existence validation)
-  - `GET /comments/{article_id}.json` — fetch full thread with comments (for thread analysis + in-platform reading)
+  - `GET /comments/{article_id}.json` — fetch thread comments (for thread analysis)
 
 **Rate limit management:**
 - Track requests per minute globally
 - Scanner: 1 request per subreddit per 15-min scan cycle
-- Thread viewing: 1 request per thread opened by user (on-demand, not per-cycle)
-- Budget: ~1500 subreddits max at 15-min cycles (scanner only). Thread views are additional but user-driven and infrequent.
+- Thread analysis: 1 request per thread analyzed (on-demand, user-triggered)
+- Budget: ~1500 subreddits max at 15-min cycles (scanner only). Thread analysis requests are additional but user-driven and infrequent.
 - On 429 response: exponential backoff (1s, 2s, 4s, 8s, max 60s)
 
 ### 6.2 Claude API (Anthropic) — Relevance, Analysis, Intelligence
@@ -656,8 +679,8 @@ Chat messages stored in `thread_chat_messages` table. Thread content + previous 
 - **Claude Sonnet** — thread analysis, thread chat follow-ups, onboarding website analysis
 
 **Usage per scan cycle (per user):**
-- Pre-filter (Pass 1): zero LLM calls — keyword/regex only
-- Relevance scoring (Pass 2): ~5-25 Haiku calls (only posts passing keyword filter)
+- Pre-filter (Pass 1): zero LLM calls — local semantic model + keyword/regex
+- Relevance scoring (Pass 2): ~5-25 Haiku calls (only posts passing semantic filter)
 - Thread analysis: ~1-5 Sonnet calls (on-demand, user-triggered)
 - Thread chat: ~1-10 Sonnet calls (on-demand, per user question)
 - Onboarding: ~3-5 Sonnet calls (one-time)
@@ -672,10 +695,7 @@ Chat messages stored in `thread_chat_messages` table. Thread content + previous 
 
 **Why SES over Resend:** Resend free tier caps at 100 emails/day (3,000/month). For an alerting product that needs to email users the moment a high-priority post is found, this is too restrictive even at MVP. Amazon SES costs $0.10/1000 emails with no meaningful daily cap.
 
-- High priority alerts → email sent immediately
-- Medium priority alerts → in-app only (email optional based on user preference)
-- Low priority alerts → in-app only, no email
-- Rate limit: max 50 alert emails/day per user (prevent inbox flooding)
+- **No rate limit on user inbox** — alerts are time-sensitive, similar to Slack notifications. Every high-priority alert triggers an immediate email. Users control volume via alert threshold setting (All / High + Medium / High only).
 
 ### 6.5 LLM Failover Strategy
 
@@ -699,18 +719,41 @@ Chat messages stored in `thread_chat_messages` table. Thread content + previous 
 ```
 FOR each active monitored_subreddit (where status = 'active'):
 
-  PASS 1 — KEYWORD PRE-FILTER (zero LLM cost):
-  1. Fetch new posts from Reddit API (since last_seen_post_id)
-  2. FOR each new post:
-     a. Check dedup (already in alerts table by reddit_post_id?)
-     b. Keyword match: check post title + body against user's keywords
-        - Exact match and fuzzy match (stemming, synonyms)
-     c. Intent signal regex: check for phrases like:
-        "looking for", "recommend", "alternative to", "help me find",
-        "anyone use", "best tool for", "need a", "budget $"
-     d. Competitor name match: check against competitor list
-     e. IF keyword_match OR intent_match OR competitor_match → pass to Pass 2
-     f. ELSE → discard (not relevant)
+  PASS 1 — SEMANTIC + KEYWORD PRE-FILTER (zero LLM API cost):
+
+  Uses a local sentence-transformer model (all-MiniLM-L6-v2, ~80MB, open source)
+  for semantic similarity scoring combined with keyword matching and regex.
+
+  How it works:
+  a. On user onboarding, generate embedding vectors for:
+     - User's business description
+     - User's ICP description
+     - Each keyword
+     - Competitor names + context phrases
+     Store these as a "user relevance profile" vector.
+
+  b. For each incoming post (title + body):
+     - Generate embedding vector using same model (~5ms per post)
+     - Cosine similarity against user relevance profile
+     - Keyword exact/fuzzy match (stemming, synonyms)
+     - Intent signal regex: "looking for", "recommend", "alternative to",
+       "help me find", "anyone use", "best tool for", "need a", "budget $",
+       "switching from", "what do you use", "tired of"
+     - Competitor name match: check against competitor list
+
+  c. Scoring (0.0 - 1.0):
+     - semantic_score: cosine similarity (0.0 - 1.0)
+     - keyword_boost: +0.2 if keyword match, +0.3 if competitor match
+     - intent_boost: +0.15 if intent regex matches
+     - pass1_score = min(1.0, semantic_score + keyword_boost + intent_boost)
+
+  d. IF pass1_score >= 0.3 → pass to Pass 2
+     ELSE → discard (not relevant)
+
+  Model: all-MiniLM-L6-v2 (https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)
+  - 80MB, runs on CPU, ~5ms per embedding
+  - Captures semantic meaning: "searching for a solution" matches "tool recommendation"
+  - Open source (Apache 2.0), no API costs
 
   PASS 2 — LLM RELEVANCE SCORING (Haiku, only filtered posts):
   1. FOR each post that passed Pass 1:
@@ -722,14 +765,18 @@ FOR each active monitored_subreddit (where status = 'active'):
         - User's competitor list
      b. LLM returns:
         - relevance_score (0.0 - 1.0)
-        - relevance_reasoning (one-line explanation)
         - category ('general' | 'competitor_mention' | 'high_intent')
      c. Calculate priority_score (weighted formula):
         - relevance (40%): from LLM score
-        - recency (25%): 1.0 if <15min, 0.7 if <1hr, 0.4 if <6hr, 0.1 if >6hr
+        - recency (30%):
+            < 15 min  → 1.0
+            < 1 hour  → 0.8
+            < 3 hours → 0.6
+            < 6 hours → 0.4
+            < 12 hours → 0.2
+            > 12 hours → 0.1
         - engagement_velocity (15%): (upvotes + comments) / minutes_since_posted
-        - intent_signals (10%): 1.0 if strong intent phrases, 0.5 if weak, 0.0 if none
-        - competitor_mention (10%): 1.0 if mentioned, 0.0 if not
+        - intent_signals (15%): 1.0 if strong intent phrases, 0.5 if weak, 0.0 if none
      d. Derive priority_level:
         - HIGH: priority_score > 0.7
         - MEDIUM: priority_score 0.4 - 0.7
@@ -745,31 +792,31 @@ FOR each active monitored_subreddit (where status = 'active'):
 
 **Priority examples:**
 
-| Scenario | Relevance | Recency | Velocity | Intent | Competitor | Total | Level |
-|----------|-----------|---------|----------|--------|------------|-------|-------|
-| "Looking for alternative to [Competitor], budget $50/mo" posted 5 min ago, 3 upvotes | 0.95 | 1.0 | 0.8 | 1.0 | 1.0 | **0.95** | HIGH |
-| "Best tools for customer discovery?" posted 45 min ago, 5 comments | 0.75 | 0.7 | 0.6 | 0.5 | 0.0 | **0.64** | MEDIUM |
-| "General discussion about marketing strategies" posted 3 hrs ago, 2 comments | 0.40 | 0.4 | 0.2 | 0.0 | 0.0 | **0.30** | LOW |
-| "Check out my new cat photo" in r/saas, posted 1 hr ago | 0.05 | 0.7 | 0.1 | 0.0 | 0.0 | **0.14** | FILTERED |
+| Scenario | Relevance (40%) | Recency (30%) | Velocity (15%) | Intent (15%) | Total | Level |
+|----------|----------------|---------------|----------------|--------------|-------|-------|
+| "Looking for alternative to [Competitor], budget $50/mo" posted 5 min ago, 3 upvotes | 0.95 | 1.0 | 0.8 | 1.0 | **0.95** | HIGH |
+| "Best tools for customer discovery?" posted 45 min ago, 5 comments | 0.75 | 0.8 | 0.6 | 0.5 | **0.72** | HIGH |
+| "General discussion about marketing strategies" posted 3 hrs ago, 2 comments | 0.40 | 0.6 | 0.2 | 0.0 | **0.36** | LOW |
+| "Check out my new cat photo" in r/saas, posted 1 hr ago | 0.05 | 0.8 | 0.1 | 0.0 | **0.28** | LOW |
 
 **Error handling:**
 - Reddit API timeout → skip subreddit, retry next cycle
 - Reddit API 429 → backoff, reduce scan frequency temporarily
 - Reddit API 403 (subreddit private/banned) → mark subreddit status='private' or 'banned', show 🔒 on dashboard
-- LLM timeout → use keyword-only scoring from Pass 1, flag post as "unscored"
-- LLM malformed response → fallback to keyword matching, log error for investigation
+- LLM timeout → use Pass 1 score only, flag post as "unscored"
+- LLM malformed response → fallback to Pass 1 scoring, log error for investigation
 - LLM API down → switch to failover model (see §6.5)
 
-### 7.2 Subreddit Health Refresh (every 60 days)
+### 7.2 Subreddit Health Refresh
 
-```
-FOR each entry in subreddit_health_cache where last_refreshed > 60 days ago:
-  1. Fetch /r/{subreddit}/about.json — check if still exists/public
-  2. If gone/private → update status, flag any users monitoring it
-  3. If active → re-run health assessment parameters
-  4. Update all fields in subreddit_health_cache
-  5. Update last_refreshed timestamp
-```
+**Manual process:** Run every 1-2 months via Supabase dashboard + Claude Code. Not an automated cron job.
+
+Steps:
+1. Query `subreddit_health_cache` for entries with `last_refreshed` > 60 days
+2. For each: fetch `/r/{subreddit}/about.json` to check if still exists/public
+3. If gone/private → update status, flag any users monitoring it
+4. If active → re-run health assessment parameters
+5. Update all fields and `last_refreshed` timestamp
 
 ---
 
@@ -782,7 +829,6 @@ FOR each entry in subreddit_health_cache where last_refreshed > 60 days ago:
 | LLM prompt injection via Reddit posts | Reddit content passed as user content in LLM calls, never as system prompt. |
 | Reddit OAuth credential exposure | Store in environment variables. Never client-side. |
 | Abuse: user creates too many subreddits | Enforce per-user limit: max 15 subreddits. Application-layer check. |
-| Email spam via alert system | Rate limit emails per user (max 50/day). High priority only by default. |
 | Rate limit exhaustion by single user | Per-user subreddit caps ensure fair distribution of API budget. |
 | LLM API key exposure | Server-side only. Never sent to client. Separate keys for Claude and OpenAI. |
 
@@ -801,7 +847,7 @@ FOR each entry in subreddit_health_cache where last_refreshed > 60 days ago:
 | Website unreachable (onboarding) | "We couldn't reach your website. Please enter your business details manually." | Fallback to manual form |
 | No relevant posts found | "No relevant posts in the last 24 hours. We're still monitoring." | Normal state — not an error |
 | Post deleted since alert | "This post may have been deleted or removed." | Show cached content with warning |
-| Subreddit doesn't exist (manual add) | "r/example does not exist. Check the spelling." | Inline error on add attempt |
+| Subreddit doesn't exist (manual add) | "This subreddit does not exist. Check the spelling." | Inline error on add attempt |
 | Max subreddits reached | "Maximum 15 subreddits allowed. Remove one to add another." | Prevent add, show count |
 
 ---
@@ -823,6 +869,7 @@ FOR each entry in subreddit_health_cache where last_refreshed > 60 days ago:
 | `alert.clicked` | `{alert_id, action: 'analyze'|'draft'|'reddit'}` | User clicks alert action |
 | `thread.analysis_requested` | `{alert_id, source: 'alert'|'manual_url'}` | Thread analysis triggered |
 | `thread.chat_message_sent` | `{thread_analysis_id, message_length}` | User asks follow-up in chat |
+| `thread.history_accessed` | `{thread_analysis_id}` | User clicks past analysis in sidebar |
 | `draft.requested` | `{alert_id, reply_target: 'post'|'comment'}` | Draft generation triggered |
 | `draft.copied` | `{draft_id, tone}` | User copies a draft |
 | `draft.edited` | `{draft_id, edit_length}` | User edits a draft |
@@ -832,7 +879,9 @@ FOR each entry in subreddit_health_cache where last_refreshed > 60 days ago:
 | `subreddit.added` | `{subreddit_name, source: 'manual'|'suggested'}` | Subreddit added |
 | `subreddit.removed` | `{subreddit_name}` | Subreddit removed |
 | `filter.changed` | `{filter_type, value}` | Dashboard filter changed |
+| `sort.changed` | `{sort_type}` | Dashboard sort changed |
 | `page.viewed` | `{page, duration_ms}` | Page navigation |
+| `suggested_question.clicked` | `{thread_analysis_id, question_text}` | User clicks a suggested question |
 
 **Backend Events (source: 'backend'):**
 | Event Type | Payload | Trigger |
@@ -841,9 +890,10 @@ FOR each entry in subreddit_health_cache where last_refreshed > 60 days ago:
 | `scan.cycle_completed` | `{duration_ms, posts_fetched, posts_filtered_pass1, posts_scored_pass2, alerts_created, errors}` | Cron job finishes |
 | `scan.subreddit_scanned` | `{subreddit, posts_found, posts_relevant, duration_ms}` | Single subreddit scanned |
 | `scan.subreddit_error` | `{subreddit, error_type, error_message}` | Subreddit scan failed |
-| `relevance.scored` | `{post_id, score, reasoning, model, duration_ms, pass1_match_type}` | LLM relevance score computed |
+| `prefilter.scored` | `{post_id, semantic_score, keyword_match, intent_match, pass1_score, passed}` | Pass 1 pre-filter result |
+| `relevance.scored` | `{post_id, score, model, duration_ms, pass1_score}` | LLM relevance score computed |
 | `relevance.fallback_used` | `{post_id, primary_model, fallback_model, reason}` | Primary LLM failed, fallback used |
-| `priority.calculated` | `{alert_id, factors: {relevance, recency, velocity, intent, competitor}, total, level}` | Priority score computed |
+| `priority.calculated` | `{alert_id, factors: {relevance, recency, velocity, intent}, total, level}` | Priority score computed |
 | `thread.analyzed` | `{thread_id, comments_count, model, duration_ms, tokens_used}` | Thread analysis completed |
 | `thread.chat_response` | `{thread_analysis_id, model, duration_ms, tokens_used}` | Chat follow-up answered |
 | `draft.generated` | `{alert_id, tone, model, duration_ms, tokens_used}` | Comment draft generated |
@@ -851,7 +901,6 @@ FOR each entry in subreddit_health_cache where last_refreshed > 60 days ago:
 | `email.failed` | `{alert_id, user_id, error, retry_count}` | Alert email failed |
 | `email.retry` | `{alert_id, attempt_number}` | Email retry attempted |
 | `health.assessed` | `{subreddit, overall_tag, source: 'cache_hit'|'fresh'}` | Subreddit health assessed |
-| `health.cache_refreshed` | `{subreddits_refreshed, duration_ms}` | Batch health refresh |
 | `llm.error` | `{provider, model, error_type, duration_ms}` | LLM API call failed |
 | `llm.failover` | `{function, from_provider, to_provider}` | Failover triggered |
 | `reddit_api.error` | `{endpoint, status_code, subreddit}` | Reddit API error |
@@ -862,8 +911,6 @@ FOR each entry in subreddit_health_cache where last_refreshed > 60 days ago:
 |-----------|---------|---------|
 | `subreddit.went_private` | `{subreddit, affected_users_count}` | Subreddit became inaccessible |
 | `subreddit.came_back` | `{subreddit, was_private_days}` | Private subreddit became public |
-| `health_refresh.started` | `{subreddits_count}` | 60-day refresh job starts |
-| `health_refresh.completed` | `{refreshed, errors, duration_ms}` | Refresh job finishes |
 
 ### 10.2 Health Indicators (dashboard for internal monitoring)
 
@@ -876,6 +923,7 @@ All queryable directly from Supabase:
 | Email delivery rate | `COUNT(email.sent) / (COUNT(email.sent) + COUNT(email.failed))` | <95% |
 | Reddit API error rate | `COUNT(reddit_api.error) per hour` | >10/hour |
 | Failover frequency | `COUNT(llm.failover) per hour` | >5/hour (indicates primary instability) |
+| Pass 1 filter rate | `COUNT(passed=true) / COUNT(*) WHERE event_type = 'prefilter.scored'` | Track — if >80% pass, filter too loose |
 | Alert relevance | Future: user feedback on alert quality | — |
 | Avg time to first alert | `AVG(first_alert.created_at - user.onboarding.completed)` | >30 min |
 
@@ -904,8 +952,9 @@ These decisions should be made during `/plan-eng-review` before implementation b
 1. **Auth:** Clerk vs. Supabase Auth vs. NextAuth
 2. **Cron/Worker:** Inngest vs. Railway cron vs. custom
 3. **Hosting:** Railway (everything) vs. Vercel (frontend) + Railway (workers)
-4. **LLM prompt templates:** Exact prompts for relevance scoring (Pass 1 regex patterns + Pass 2 Haiku prompt), health assessment, thread analysis, thread chat, comment drafting
+4. **LLM prompt templates:** Exact prompts for relevance scoring (Pass 2 Haiku prompt), health assessment, thread analysis, thread chat, comment drafting
 5. **Data retention policy:** How long to keep alerts, analyses, and event_logs
 6. **Pricing tiers:** What features are free vs. paid, what are the limits
 7. **Thread comment pagination:** Fetch all comments at once vs. paginate for large threads (>100 comments)
 8. **Frontend event batching implementation:** SDK choice or custom utility for event tracking
+9. **Sentence-transformer deployment:** Run locally on worker server vs. as a microservice vs. pre-compute embeddings at ingestion time
