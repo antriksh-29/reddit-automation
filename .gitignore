@@ -1,0 +1,34 @@
+# dependencies
+node_modules
+.pnpm-store
+
+# next.js
+.next/
+out/
+
+# env files
+.env*.local
+.env
+
+# build
+dist/
+
+# debug
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# testing
+coverage/
+test-results/
+playwright-report/
+
+# gstack
+.gstack/
+.context/
+.claude/skills/gstack.bak/

@@ -1,0 +1,44 @@
+{
+  "name": "reddit-intel",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "worker:dev": "tsx watch worker/index.ts",
+    "worker:start": "tsx worker/index.ts"
+  },
+  "dependencies": {
+    "next": "^15.3.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "@supabase/supabase-js": "^2.49.0",
+    "@supabase/ssr": "^0.6.0",
+    "@anthropic-ai/sdk": "^0.39.0",
+    "openai": "^4.85.0",
+    "@aws-sdk/client-ses": "^3.750.0",
+    "dompurify": "^3.2.0",
+    "p-limit": "^6.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@types/dompurify": "^3.2.0",
+    "@types/node": "^22.0.0",
+    "tailwindcss": "^4.1.0",
+    "@tailwindcss/postcss": "^4.1.0",
+    "postcss": "^8.5.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^15.3.0",
+    "vitest": "^3.1.0",
+    "@playwright/test": "^1.50.0",
+    "tsx": "^4.19.0",
+    "@tailwindcss/vite": "^4.1.0"
+  }
+}
