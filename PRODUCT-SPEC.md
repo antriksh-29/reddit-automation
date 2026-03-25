@@ -113,8 +113,12 @@ description     TEXT        (AI-generated or manually entered, editable)
 icp_description TEXT        (ideal customer profile description)
 brand_voice     TEXT        (tone, prohibited phrases, example language)
 keywords        JSONB       ({primary: [...], discovery: [...]} — tagged keyword arrays, add/delete manually)
+embedding_vectors VECTOR(384)[] — array of pgvector embeddings (business desc, ICP, each keyword). Generated during onboarding, re-computed on profile edit.
 created_at      TIMESTAMP   DEFAULT NOW()
 updated_at      TIMESTAMP   DEFAULT NOW()
+
+NOTE: Requires pgvector extension enabled in Supabase.
+      CREATE INDEX ON businesses USING hnsw (embedding_vectors vector_cosine_ops);
 ```
 
 ### competitors
@@ -140,9 +144,7 @@ rules_json      JSONB       (full rules from Reddit API)
 activity_tag    ENUM        ('strong', 'medium', 'weak')
 engagement_tag  ENUM        ('strong', 'medium', 'weak')
 moderation_tag  ENUM        ('strong', 'medium', 'weak')
-icp_relevance_tag ENUM      ('strong', 'medium', 'weak') — per-business, stored in monitored_subreddits
-recency_tag     ENUM        ('strong', 'medium', 'weak')
-overall_tag     ENUM        ('strong', 'medium', 'weak')
+overall_tag     ENUM        ('strong', 'medium', 'weak') — based on universal metrics only (activity + engagement + moderation)
 health_details  JSONB       (per-parameter breakdown with explanations)
 category        VARCHAR     (e.g., 'engineering', 'sales', 'marketing', 'product', etc.)
 last_refreshed  TIMESTAMP   DEFAULT NOW()
@@ -1087,16 +1089,51 @@ All queryable directly from Supabase:
 
 ---
 
-## 11. Open Decisions for Engineering
+## 11. Engineering Decisions (Resolved)
 
-These decisions should be made during `/plan-eng-review` before implementation begins:
+Decided during `/plan-eng-review` on 2026-03-25:
 
-1. **Auth:** Clerk vs. Supabase Auth vs. NextAuth
-2. **Cron/Worker:** Inngest vs. Railway cron vs. custom
-3. **Hosting:** Railway (everything) vs. Vercel (frontend) + Railway (workers)
-4. **LLM prompt templates:** Exact prompts for relevance scoring (Pass 2 Haiku prompt), health assessment, thread analysis, thread chat, comment drafting
-5. **Data retention policy:** How long to keep alerts, analyses, and event_logs
-6. **Pricing tiers:** What features are free vs. paid, what are the limits
-7. **Thread comment pagination:** Fetch all comments at once vs. paginate for large threads (>100 comments)
-8. **Frontend event batching implementation:** SDK choice or custom utility for event tracking
-9. **Sentence-transformer deployment:** Run locally on worker server vs. as a microservice vs. pre-compute embeddings at ingestion time
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Auth** | Supabase Auth | Native RLS integration, one vendor for auth + DB, 50K free MAUs |
+| **Hosting** | Vercel (frontend + API) + Railway (worker) | Vercel for Next.js DX, Railway for persistent ML model worker |
+| **Scanner execution** | Long-running Node.js process with `setInterval` | ML model (80MB) loads once at startup, stays in memory. No cold-start penalty. Railway auto-restarts on crash. |
+| **First-time scan trigger** | Railway webhook endpoint (`/scan-now`) | Vercel calls worker after onboarding. Secured with shared secret. |
+| **Embedding storage** | pgvector extension in Supabase | VECTOR(384) columns with HNSW index. Future-proof for scale. |
+| **Repo structure** | Single repo with `worker/` directory | Shared `src/lib/` imports. Refactor to monorepo when team grows. |
+| **Scanner optimization** | Scan by unique subreddit, score per-user | Reddit API fetch shared across users monitoring same subreddit. Pass 1 + Pass 2 scoring runs per-user (each user's context is different). |
+| **Data retention** | 30 days event_logs + monthly CSV export to cloud storage | Keeps Supabase DB lean within free tier limits. |
+| **Test framework** | Vitest (unit/integration) + Playwright (E2E) | Standard Next.js 2026 testing stack. Tests written alongside every feature. |
+| **Haiku parallelization** | `p-limit` with concurrency=10 | Sequential Haiku calls exceed 15-min budget at scale. 13-min circuit breaker aborts remaining calls and uses Pass 1 scores. |
+| **Dashboard performance** | 4 composite indexes + cursor-based pagination | Indexes on (business_id, created_at), (business_id, priority_level), (business_id, is_seen), (business_id, category). |
+
+### Corrected Scanner Flow (per cycle)
+
+```
+1. Query all unique active subreddits across ALL users
+2. FOR each unique subreddit:
+   a. Fetch new posts from Reddit API (1 API call — shared)
+   b. FOR each user monitoring this subreddit:
+      - Pass 1: Embed post against THIS user's vectors (pgvector)
+      - If pass1_score >= 0.4 → Pass 2: Haiku with THIS user's context
+      - Calculate priority for THIS user
+      - Create alert for THIS user if above threshold
+3. Update last_scanned_at per subreddit
+```
+
+Reddit API calls scale with unique subreddits. Scoring calls scale with (posts × users).
+
+### Infrastructure Notes
+
+- **Railway worker must be always-on** — configure Railway to prevent scale-to-zero. Cold start (30-60s to reload ML model) would miss scan windows.
+- **Amazon SES sandbox** — SES starts in sandbox mode (can only email verified addresses). Submit production access request immediately after AWS account setup. Allow 24-48h for approval. Use Resend as temporary fallback during sandbox period.
+- **pgvector HNSW index** — Create HNSW index on embedding columns for efficient similarity search. Required from day one, not a future optimization.
+- **RLS policies** — Design explicit RLS policies for each table. Key chain: `alerts` → `monitored_subreddits.business_id` → `businesses.user_id` → `auth.uid()`. Test RLS policies in migration before deploying.
+- **Scan overlap prevention** — Use a simple mutex (DB row lock or in-memory flag) to prevent overlapping scan cycles if a cycle runs long.
+
+## 12. Remaining Open Decisions (for implementation)
+
+1. **LLM prompt templates:** Exact prompts for relevance scoring, health assessment, thread analysis, thread chat, comment drafting — to be iterated during implementation
+2. **Pricing tiers:** What features are free vs. paid, what are the limits — product decision
+3. **Thread comment pagination:** Fetch all comments at once vs. paginate for large threads (>100 comments)
+4. **Frontend event batching:** Custom lightweight utility (batch 10 events or 30s, POST to `/api/events`)
