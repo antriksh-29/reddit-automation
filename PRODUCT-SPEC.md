@@ -28,7 +28,7 @@ A SaaS platform that helps GTM teams, indie hackers, and marketing agencies find
 
 ### Persona B: GTM Team Member
 - Works at a startup/scale-up, Reddit is one of several marketing channels
-- Monitors 5-15 subreddits for lead gen and brand awareness
+- Monitors 5-10 subreddits for lead gen and brand awareness
 - Needs to report insights to their team — thread analysis is high value
 - Competitor monitoring is critical — want to know when competitors are mentioned
 - Budget: $49-99/mo per seat
@@ -169,7 +169,7 @@ created_at      TIMESTAMP   DEFAULT NOW()
 updated_at      TIMESTAMP   DEFAULT NOW()
 
 UNIQUE(business_id, subreddit_name)
-CONSTRAINT max_subreddits_per_business CHECK via application layer (max 15)
+CONSTRAINT max_subreddits_per_business CHECK via application layer (max 10)
 ```
 
 ### alerts
@@ -188,7 +188,7 @@ num_comments    INTEGER     DEFAULT 0
 priority_score  FLOAT       (composite: weighted formula below)
 priority_level  ENUM        ('high', 'medium', 'low') — derived from priority_score
 priority_factors JSONB      (breakdown: {relevance, recency, velocity, intent})
-category        ENUM        ('general', 'competitor_mention', 'high_intent') DEFAULT 'general'
+category        ENUM        ('pain_point', 'solution_request', 'competitor_dissatisfaction', 'experience_sharing', 'industry_discussion')
 email_status    ENUM        ('pending', 'sent', 'failed', 'skipped') DEFAULT 'pending'
 email_sent_at   TIMESTAMP
 is_seen         BOOLEAN     DEFAULT false (true when user views alert on dashboard)
@@ -294,7 +294,7 @@ Step 2: Business Profile + Monitoring Setup (single page, all editable)
   │  [Competitor A ✕] (auto) [Competitor B ✕] (auto)       │
   │  [+ Add competitor]                                     │
   │                                                         │
-  │  SUBREDDITS TO MONITOR (max 15)                         │
+  │  SUBREDDITS TO MONITOR (max 10)                         │
   │  AI-suggested subreddits:                               │
   │  ☑ saas            [Strong ●] (hover for details)      │
   │  ☑ startups        [Medium ●] (hover for details)      │
@@ -338,7 +338,7 @@ Step 2: Business Profile + Monitoring Setup (single page, all editable)
 - Website unreachable → show error, offer manual entry
 - Website has minimal content → generate partial profile, flag gaps for manual input
 - No subreddits match → show "No matches found, please add subreddits manually"
-- User tries to add >15 subreddits → show "Maximum 15 subreddits allowed. Remove one to add another."
+- User tries to add >10 subreddits → show "Maximum 10 subreddits allowed. Remove one to add another."
 
 ### 5.1.1 First-Time Post Fetch
 
@@ -411,13 +411,14 @@ This minimizes Reddit API calls — most subreddits will already be cached.
 │  │  ┌──────────────────┐  │  ○ This Month    │             │ │
 │  │  │ Category         │  │  ○ Custom Range  │             │ │
 │  │  │  ○ All           │  └──────────────────┘             │ │
-│  │  │  ○ Competitor    │                                    │ │
-│  │  │  ○ High Intent   │  Sort by (hover to expand):       │ │
-│  │  │  ○ General       │  ┌──────────────────┐             │ │
-│  │  └──────────────────┘  │  ○ Priority      │             │ │
-│  │                         │  ○ Newest        │             │ │
-│  │  (selected filters      │  ○ Most Comments │             │ │
-│  │   remain highlighted)   └──────────────────┘             │ │
+│  │  │  ○ Pain Points   │                                    │ │
+│  │  │  ○ Solution Req  │  Sort by (hover to expand):       │ │
+│  │  │  ○ Competitor    │  ┌──────────────────┐             │ │
+│  │  │  ○ Experience    │  │  ○ Priority      │             │ │
+│  │  │  ○ Industry      │  │  ○ Newest        │             │ │
+│  │  └──────────────────┘  │  ○ Most Comments │             │ │
+│  │                         └──────────────────┘             │ │
+│  │  (selected filters remain highlighted)                    │ │
 │  └──────────────────────────────────────────────────────────┘│
 │                                                               │
 │  ┌─── NEW ALERTS (3) ─────────────────────────────────────┐ │
@@ -425,14 +426,14 @@ This minimizes Reddit API calls — most subreddits will already be cached.
 │  │  ┌─────────────────────────────────────────────────┐     ││
 │  │  │ 🔴 HIGH · r/saas · 3 min ago                     │     ││
 │  │  │ "Looking for alternatives to [Competitor]"       │     ││
-│  │  │ Competitor mention · 12 upvotes · 8 comments     │     ││
+│  │  │ Competitor Dissatisfaction · 12 upvotes · 8 comments│    ││
 │  │  │ [Analyze Thread] [Draft Response] [View on Reddit]│    ││
 │  │  └─────────────────────────────────────────────────┘     ││
 │  │                                                           ││
 │  │  ┌─────────────────────────────────────────────────┐     ││
 │  │  │ 🟡 MEDIUM · r/startups · 12 min ago              │     ││
 │  │  │ "Best tools for early-stage customer discovery"  │     ││
-│  │  │ High intent · 5 upvotes · 3 comments             │     ││
+│  │  │ Solution Request · 5 upvotes · 3 comments          │     ││
 │  │  │ [Analyze Thread] [Draft Response] [View on Reddit]│    ││
 │  │  └─────────────────────────────────────────────────┘     ││
 │  │                                                           ││
@@ -449,7 +450,7 @@ This minimizes Reddit API calls — most subreddits will already be cached.
 │  │  r/startups [Medium ●] · Last scan: 2 min ago · 5 alerts ││
 │  │  r/indiehackers [Strong ●] · Last scan: 2 min ago · 8    ││
 │  │  r/example [🔒 Private] · Paused                         ││
-│  │  [+ Add subreddit]  (3/15 slots used)                     ││
+│  │  [+ Add subreddit]  (3/10 slots used)                     ││
 │  └───────────────────────────────────────────────────────────┘│
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -617,7 +618,7 @@ Default suggestions:
 │            │  │  Competitors: [Comp A ✕] [+ add]          │ │
 │            │  │  Subreddits:                               │ │
 │            │  │    [saas ✕ Strong●] [startups ✕ Med●]     │ │
-│            │  │    [+ add] (5/15 used)                    │ │
+│            │  │    [+ add] (5/10 used)                    │ │
 │            │  │    (hover tag for health details)          │ │
 │            │  │                                            │ │
 │            │  │  [Save Changes]                            │ │
@@ -736,9 +737,13 @@ FOR each active monitored_subreddit (where status = 'active'):
      - Generate embedding vector using same model (~5ms per post)
      - Cosine similarity against user relevance profile
      - Keyword exact/fuzzy match (stemming, synonyms)
-     - Intent signal regex: "looking for", "recommend", "alternative to",
-       "help me find", "anyone use", "best tool for", "need a", "budget $",
-       "switching from", "what do you use", "tired of"
+     - Intent signal regex (drawn from all 5 category keyword signals):
+       Pain: "frustrated with", "waste of time", "so tedious", "struggling with"
+       Solution: "looking for", "recommend", "best tool for", "any suggestions",
+                 "help me find", "need a", "budget $"
+       Competitor: "alternative to", "switching from", "replacing", "tired of"
+       Experience: "honest review", "just switched to", "been using", "my take"
+       Industry: "how do you", "best practices", "what's your process"
      - Competitor name match: check against competitor list
 
   c. Scoring (0.0 - 1.0):
@@ -776,7 +781,7 @@ FOR each active monitored_subreddit (where status = 'active'):
         - User's competitor list
      b. LLM returns:
         - relevance_score (0.0 - 1.0)
-        - category ('general' | 'competitor_mention' | 'high_intent')
+        - category (one of the 5 post categories — see §7.1.1 below)
      c. Calculate priority_score (weighted formula):
         - relevance (40%): from LLM score
         - recency (30%):
@@ -810,6 +815,47 @@ FOR each active monitored_subreddit (where status = 'active'):
 | "General discussion about marketing strategies" posted 3 hrs ago, 2 comments | 0.40 | 0.6 | 0.2 | 0.0 | **0.36** | LOW |
 | "Check out my new cat photo" in r/saas, posted 1 hr ago | 0.05 | 0.8 | 0.1 | 0.0 | **0.28** | LOW |
 
+### 7.1.1 Post Category Definitions
+
+The LLM classifies each post into exactly one of these 5 categories. These definitions and keyword signals are included in the Haiku system prompt to ensure consistent classification.
+
+**1. Pain Points** (`pain_point`)
+The poster is expressing a problem, frustration, or challenge — but is NOT yet asking for a specific tool or solution. They're venting, describing friction, or looking for empathy and validation. They know something hurts, but haven't framed it as "I need software X."
+
+Keyword signals: "frustrated with", "hate doing", "waste of time", "so tedious", "anyone else deal with", "is it just me or...", "struggling with", "can't figure out", "drives me crazy"
+
+Example: *"Spent 3 hours today manually scrolling through r/saas looking for relevant threads. This is such a waste of time."*
+
+**2. Solution Requests** (`solution_request`)
+The poster is explicitly asking for a tool, product, service, or approach to solve a stated problem. They've moved past frustration and are now in "shopping mode." This is the highest direct-intent category.
+
+Keyword signals: "recommend", "looking for", "best tool for", "any suggestions", "what do you use for", "anyone know a good...", "need a tool that", "help me find", "budget $"
+
+Example: *"Looking for a Reddit monitoring tool that can alert me when someone mentions my competitors. Budget around $50/mo. Any suggestions?"*
+
+**3. Competitor Dissatisfaction** (`competitor_dissatisfaction`)
+The poster is specifically naming a competitor product and expressing dissatisfaction OR explicitly seeking alternatives. The conversation is anchored around an existing product, not an open-ended need.
+
+Keyword signals: "[competitor] alternative", "switching from [competitor]", "[competitor] vs", "[competitor] sucks", "replacing [competitor]", "tired of [competitor]", "leaving [competitor]", "[competitor] pricing is insane"
+
+Example: *"GummySearch shut down and I'm looking for alternatives. What are you all using now for Reddit lead monitoring?"*
+
+**4. Experience Sharing** (`experience_sharing`)
+The poster is sharing their personal experience with a product — positive, negative, or neutral. They're NOT asking for help; they're TELLING the community what they found. Includes retrospective reviews, comparison posts, and stack-sharing posts.
+
+Keyword signals: "here's my experience", "honest review", "been using X for", "just switched to", "my stack is", "PSA about", "X vs Y — my take", "after 6 months with", "quick review of"
+
+Example: *"Been using Pulse for 3 months now for Reddit monitoring. Here's my honest take — the alerts are decent but the thread analysis is basically non-existent."*
+
+**5. Industry / Workflow Discussion** (`industry_discussion`)
+The poster is discussing a general process, workflow, strategy, or industry topic related to the user's domain — but isn't expressing a specific pain point or asking for a tool. They're in "learning mode" or "discussion mode." These posts indicate the person is in the user's ICP but at the earliest possible stage.
+
+Keyword signals: "how do you", "what's your process for", "best practices for", "curious how", "what does your team do about", "workflow for", "how are people handling", "what's the state of"
+
+Example: *"How do you all handle Reddit as a marketing channel? Curious what your process looks like for finding relevant threads."*
+
+---
+
 **Error handling:**
 - Reddit API timeout → skip subreddit, retry next cycle
 - Reddit API 429 → backoff, reduce scan frequency temporarily
@@ -839,7 +885,7 @@ Steps:
 | XSS from Reddit content in dashboard | Sanitize all Reddit-sourced HTML/markdown before rendering. Use DOMPurify or equivalent. |
 | LLM prompt injection via Reddit posts | Reddit content passed as user content in LLM calls, never as system prompt. |
 | Reddit OAuth credential exposure | Store in environment variables. Never client-side. |
-| Abuse: user creates too many subreddits | Enforce per-user limit: max 15 subreddits. Application-layer check. |
+| Abuse: user creates too many subreddits | Enforce per-user limit: max 10 subreddits. Application-layer check. |
 | Rate limit exhaustion by single user | Per-user subreddit caps ensure fair distribution of API budget. |
 | LLM API key exposure | Server-side only. Never sent to client. Separate keys for Claude and OpenAI. |
 
@@ -859,7 +905,7 @@ Steps:
 | No relevant posts found | "No relevant posts in the last 24 hours. We're still monitoring." | Normal state — not an error |
 | Post deleted since alert | "This post may have been deleted or removed." | Show cached content with warning |
 | Subreddit doesn't exist (manual add) | "This subreddit does not exist. Check the spelling." | Inline error on add attempt |
-| Max subreddits reached | "Maximum 15 subreddits allowed. Remove one to add another." | Prevent add, show count |
+| Max subreddits reached | "Maximum 10 subreddits allowed. Remove one to add another." | Prevent add, show count |
 
 ---
 

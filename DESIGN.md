@@ -75,7 +75,7 @@ All share the same core pain: manually finding relevant conversations is slow, a
 - **User** — account with email, auth credentials, plan tier. Each account tracks ONE business (website, description, ICPs, competitors). Multi-business/client support deferred to a later version.
 - **Business** — the user's business profile: website URL, description, ICPs, brand voice, competitor list. One per user for MVP. Design DB schema with `business_id` FK from day 1 for future multi-business support.
 - **MonitoredSubreddit** — subreddit tracked for the user's business, with relevance keywords, health assessment (Strong/Medium/Weak tag with parameter explanations). Scan frequency is system-determined (15 minutes), not user-configurable.
-- **Alert** — a discovered Reddit post/comment with priority score, relevance score, source subreddit, Reddit post ID, timestamp, delivery status, alert category (general / competitor-mention / high-intent)
+- **Alert** — a discovered Reddit post/comment with priority score, relevance score, source subreddit, Reddit post ID, timestamp, delivery status, alert category (pain_point / solution_request / competitor_dissatisfaction / experience_sharing / industry_discussion)
 - **ThreadAnalysis** — AI-generated summary of a Reddit thread, includes extracted pain points, sentiment, key insights
 - **CommentDraft** — AI-generated response draft linked to an Alert, with approval state (pending/approved/rejected)
 ## Core Features
@@ -118,7 +118,7 @@ Example: "Moderation: **Medium** — 8 rules, allows helpful product mentions bu
   - **Engagement velocity** — fast-rising posts (rapid upvotes/comments in short time)
   - **Intent signals** — phrases like "looking for", "recommend", "alternative to", "help me find"
   - **Competitor mention** — does the post mention any of the user's listed competitors?
-- Alerts categorized as: **general** / **competitor-mention** / **high-intent**
+- Alerts categorized as: **pain_point** / **solution_request** / **competitor_dissatisfaction** / **experience_sharing** / **industry_discussion**
 - Multi-channel delivery: **in-app and email only** for this version. Slack/webhook deferred.
 - Delivery failures retried 3x with exponential backoff.
 - **Alert deduplication:** Track `last_seen_post_id` per subreddit to avoid re-alerting on same post across scan cycles.
@@ -142,7 +142,7 @@ Example: "Moderation: **Medium** — 8 rules, allows helpful product mentions bu
 
 - During onboarding, system auto-suggests competitors (from website analysis) + user can manually add 3-5 competitor names/URLs
 - Alerting engine scans for competitor name mentions alongside regular keyword matching
-- Competitor mentions surface as a distinct alert category — users can filter alert feed by "competitor-mention"
+- Competitor mentions surface as a distinct alert category ("competitor_dissatisfaction") — users can filter alert feed by category
 - High-priority alert when someone asks "what's the best tool for X?" and a competitor is mentioned
 
 ### Feature 7: Landing Page
