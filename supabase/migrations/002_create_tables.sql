@@ -3,7 +3,7 @@
 
 -- Users (synced from Supabase Auth)
 CREATE TABLE users (
-  id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email            VARCHAR NOT NULL UNIQUE,
   name             VARCHAR,
   plan_tier        VARCHAR DEFAULT 'free' CHECK (plan_tier IN ('free', 'growth', 'custom')),
@@ -16,7 +16,7 @@ CREATE TABLE users (
 
 -- Businesses (1:1 with users for MVP)
 CREATE TABLE businesses (
-  id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id           UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
   website_url       VARCHAR,
   name              VARCHAR NOT NULL,
@@ -31,7 +31,7 @@ CREATE TABLE businesses (
 
 -- Competitors
 CREATE TABLE competitors (
-  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id   UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
   name          VARCHAR NOT NULL,
   url           VARCHAR,
@@ -41,7 +41,7 @@ CREATE TABLE competitors (
 
 -- Subreddit Health Cache (shared across all users)
 CREATE TABLE subreddit_health_cache (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   subreddit_name  VARCHAR NOT NULL UNIQUE,
   subscribers     INTEGER,
   posts_per_day   FLOAT,
@@ -61,7 +61,7 @@ CREATE TABLE subreddit_health_cache (
 
 -- Monitored Subreddits (per-business)
 CREATE TABLE monitored_subreddits (
-  id                 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id        UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
   subreddit_name     VARCHAR NOT NULL,
   relevance_keywords JSONB,
@@ -78,7 +78,7 @@ CREATE TABLE monitored_subreddits (
 
 -- Alerts
 CREATE TABLE alerts (
-  id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id      UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
   subreddit_id     UUID NOT NULL REFERENCES monitored_subreddits(id) ON DELETE CASCADE,
   reddit_post_id   VARCHAR NOT NULL UNIQUE,
@@ -102,7 +102,7 @@ CREATE TABLE alerts (
 
 -- Thread Analyses
 CREATE TABLE thread_analyses (
-  id                    UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id           UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
   alert_id              UUID REFERENCES alerts(id) ON DELETE SET NULL,
   reddit_url            VARCHAR NOT NULL,
@@ -120,7 +120,7 @@ CREATE TABLE thread_analyses (
 
 -- Thread Chat Messages
 CREATE TABLE thread_chat_messages (
-  id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   thread_analysis_id  UUID NOT NULL REFERENCES thread_analyses(id) ON DELETE CASCADE,
   role                VARCHAR NOT NULL CHECK (role IN ('user', 'assistant')),
   content             TEXT NOT NULL,
@@ -129,7 +129,7 @@ CREATE TABLE thread_chat_messages (
 
 -- Comment Drafts
 CREATE TABLE comment_drafts (
-  id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   alert_id          UUID NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
   business_id       UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
   parent_comment_id VARCHAR,
@@ -142,7 +142,7 @@ CREATE TABLE comment_drafts (
 
 -- Credit Balances (1:1 with users)
 CREATE TABLE credit_balances (
-  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id       UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
   balance       FLOAT NOT NULL DEFAULT 0.00,
   lifetime_used FLOAT NOT NULL DEFAULT 0.00,
@@ -153,7 +153,7 @@ CREATE TABLE credit_balances (
 
 -- Credit Transactions (audit trail)
 CREATE TABLE credit_transactions (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   action_type     VARCHAR NOT NULL CHECK (action_type IN (
     'thread_analysis', 'thread_chat', 'draft_generation', 'draft_regeneration',
@@ -169,7 +169,7 @@ CREATE TABLE credit_transactions (
 
 -- Event Logs
 CREATE TABLE event_logs (
-  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     UUID REFERENCES users(id) ON DELETE SET NULL,
   business_id UUID REFERENCES businesses(id) ON DELETE SET NULL,
   event_type  VARCHAR NOT NULL,

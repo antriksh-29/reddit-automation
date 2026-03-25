@@ -8,6 +8,7 @@ A dark-mode SaaS platform that monitors Reddit for relevant posts, provides AI-p
 - **TECH-SPEC.md** — Complete technical blueprint: stack, architecture, project structure, database schema, worker design, deployment, build order
 - **DESIGN-SYSTEM.md** — Visual design system: colors, typography, spacing, components, anti-patterns
 - **DESIGN.md** — Product strategy: problem statement, demand evidence, target users, premises, feature definitions
+- **PROGRESS.md** — Development progress tracker: what's done, what's remaining, phase-by-phase status. **Read this first when resuming work.**
 
 ## Technology Stack
 - **Frontend:** Next.js 15 (App Router) on Vercel
@@ -18,7 +19,7 @@ A dark-mode SaaS platform that monitors Reddit for relevant posts, provides AI-p
 - **ML:** all-MiniLM-L6-v2 via @huggingface/transformers (loaded in Railway worker)
 - **LLM:** Claude Haiku (scoring) + Claude Sonnet (analysis) + GPT-4o (drafting)
 - **Email:** Amazon SES
-- **Styling:** Tailwind CSS + shadcn/ui
+- **Styling:** Inline styles using DESIGN-SYSTEM.md CSS custom properties (Tailwind 4 @theme vars don't resolve with utility classes)
 - **Testing:** Vitest + Playwright
 - **Package manager:** pnpm
 
