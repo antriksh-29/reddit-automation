@@ -112,7 +112,7 @@ name            VARCHAR     NOT NULL
 description     TEXT        (AI-generated or manually entered, editable)
 icp_description TEXT        (ideal customer profile description)
 brand_voice     TEXT        (tone, prohibited phrases, example language)
-keywords        JSONB       (array of monitoring keywords — add/delete manually)
+keywords        JSONB       ({primary: [...], discovery: [...]} — tagged keyword arrays, add/delete manually)
 created_at      TIMESTAMP   DEFAULT NOW()
 updated_at      TIMESTAMP   DEFAULT NOW()
 ```
@@ -262,6 +262,89 @@ INDEX ON (business_id, created_at)
 
 **Trigger:** First login or when user has no business profile.
 
+#### 5.1.0 Onboarding Agent Pipeline
+
+The onboarding uses a **two-agent pipeline** — each agent has a distinct responsibility:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  AGENT 1: Business Intelligence Agent                    │
+│  Input:  Website URL (or manual entry)                   │
+│  Task:   Fetch and analyze the website to understand     │
+│          what the company does, who it serves, and who   │
+│          it competes with                                │
+│  Output: Business description, ICP description,          │
+│          competitor list (names + URLs)                   │
+│  Model:  Claude Sonnet                                   │
+└──────────────────────┬──────────────────────────────────┘
+                       │ passes business context
+                       ▼
+┌─────────────────────────────────────────────────────────┐
+│  AGENT 2: Discovery Agent                                │
+│  Input:  Business description, ICP description,          │
+│          competitor list from Agent 1                     │
+│  Task:   Find the most relevant subreddits and keywords  │
+│          considering the business context and ICP         │
+│  Output: 7 subreddit recommendations (with rationale),   │
+│          10 keyword recommendations (with rationale)      │
+│  Model:  Claude Sonnet                                   │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Agent 1 — Business Intelligence Agent:**
+
+Receives the website URL, fetches the homepage content, and extracts:
+- **Business name** — from title tag, hero section, or logo text
+- **Business description** — what the company does, in 2-3 sentences. Written in third person, factual, not marketing language.
+- **ICP description** — who the ideal customer is. Role, company size, industry, what problem they face. As specific as possible.
+- **Competitor list** — 3-5 competitors identified from the website content (pricing pages, comparison sections, "alternative to" pages, or inferred from product category).
+
+If website is unreachable or has minimal content → returns partial results and flags gaps for manual input.
+
+**Agent 2 — Discovery Agent:**
+
+Receives the full business context from Agent 1 and recommends subreddits + keywords.
+
+**Subreddit recommendation parameters (max 7):**
+
+The agent evaluates subreddits on these criteria and recommends a specific mix:
+
+| Criteria | What the agent evaluates |
+|----------|------------------------|
+| Topic-ICP overlap | Do the people who post here match the ICP? (audience match > topic match) |
+| Problem presence | Do conversations in this subreddit discuss the problems the product solves? |
+| Solution-seeking behavior | Do people here actively ask for tool recommendations, or just share news? |
+| Competitor footprint | Are any identified competitors already discussed here? |
+| Commercial tolerance | Is this a subreddit where product mentions are welcome or banned? |
+| Size & activity | Is there enough volume to generate alerts, but not so much it's pure noise? |
+
+**Required mix (7 subreddits):**
+- **3 niche subreddits** — small, highly targeted communities where the ICP concentrates. High signal-to-noise. (e.g., r/coldcalling for a sales tool)
+- **2 mid-size subreddits** — broader but still relevant. Good volume + decent relevance. (e.g., r/sales)
+- **2 large subreddits** — high-traffic communities with known recommendation culture. (e.g., r/startups, r/SaaS)
+
+Each subreddit recommendation includes a one-line rationale explaining WHY it was chosen, so the user can make an informed keep/remove decision.
+
+**Keyword recommendation parameters (10 total):**
+
+Keywords are recommended in the ICP's language, NOT the founder's marketing language. The agent must bridge the gap between how the founder describes the product and how the ICP describes the problem.
+
+| Category | Count | What it captures | Examples (for a Reddit monitoring tool) |
+|----------|-------|-----------------|----------------------------------------|
+| **PRIMARY KEYWORDS** | **5** | High-signal terms most likely to surface Solution Request and Competitor Dissatisfaction posts | |
+| Customer problem language | 2 | How the ICP describes the problem in their own words — raw, unpolished | "find relevant Reddit posts", "monitor Reddit for leads" |
+| Solution category terms | 2 | The product category as the ICP searches for it | "Reddit marketing tool", "social listening tool" |
+| Pain point vocabulary | 1 | Emotional/frustrated language ICPs use about the problem | "manually checking Reddit", "missing relevant posts" |
+| **DISCOVERY KEYWORDS** | **5** | Broader terms that catch Pain Point and Industry Discussion posts | |
+| Use case descriptors | 2 | Specific tasks/workflows the product helps with | "track competitor mentions Reddit", "Reddit lead generation" |
+| Industry-specific jargon | 1 | Domain terms only someone in the ICP's world would use | "community-led growth", "social selling" |
+| Question patterns | 1 | "How to" / "best way to" formulations the ICP uses | "how to find leads on Reddit" |
+| Negative/contrast terms | 1 | What the ICP is moving AWAY from — captures transition moments | "stop manually scrolling Reddit", "automate Reddit monitoring" |
+
+Each keyword includes a one-line rationale and is tagged as PRIMARY or DISCOVERY so the user understands its purpose.
+
+**Note:** Competitor names are NOT included in keywords — they are already captured in the competitors section and are matched separately during scanning.
+
 **Flow:**
 ```
 Step 1: Website Analysis
@@ -275,11 +358,11 @@ Step 1: Website Analysis
   │  or [Skip — I'll enter manually]    │
   └─────────────────────────────────────┘
          │
-         ▼ (LLM analyzes homepage)
+         ▼ (Agent 1 → Agent 2 pipeline runs)
 
 Step 2: Business Profile + Monitoring Setup (single page, all editable)
   ┌─────────────────────────────────────────────────────────┐
-  │  BUSINESS PROFILE                                       │
+  │  BUSINESS PROFILE (from Agent 1)                        │
   │  Business Name: [Example Inc        ] (editable)        │
   │  Description:   [AI-generated...    ] (editable)        │
   │  Target Audience: [AI-generated..   ] (editable)        │
@@ -287,18 +370,39 @@ Step 2: Business Profile + Monitoring Setup (single page, all editable)
   │                                                         │
   │  ─────────────────────────────────────────────────────  │
   │                                                         │
-  │  KEYWORDS                                               │
-  │  [keyword1 ✕] [keyword2 ✕] [keyword3 ✕] [+ add]       │
+  │  KEYWORDS (from Agent 2)                                │
+  │  Primary:                                               │
+  │  [find relevant Reddit posts ✕] [Reddit marketing      │
+  │   tool ✕] [social listening tool ✕] [monitor Reddit     │
+  │   for leads ✕] [missing relevant posts ✕]               │
+  │  Discovery:                                             │
+  │  [track competitor mentions ✕] [community-led           │
+  │   growth ✕] [how to find leads on Reddit ✕]             │
+  │  [automate Reddit monitoring ✕] [Reddit lead gen ✕]     │
+  │  [+ add keyword]                                        │
   │                                                         │
-  │  COMPETITORS                                            │
+  │  COMPETITORS (from Agent 1)                             │
   │  [Competitor A ✕] (auto) [Competitor B ✕] (auto)       │
   │  [+ Add competitor]                                     │
   │                                                         │
-  │  SUBREDDITS TO MONITOR (max 10)                         │
-  │  AI-suggested subreddits:                               │
-  │  ☑ saas            [Strong ●] (hover for details)      │
-  │  ☑ startups        [Medium ●] (hover for details)      │
-  │  ☐ smallbusiness   [Weak ●]   (hover for details)      │
+  │  SUBREDDITS TO MONITOR (from Agent 2, max 10)           │
+  │  Niche:                                                 │
+  │  ☑ coldcalling      [Strong ●] — "your ICP asks for    │
+  │                       sales tools here daily"            │
+  │  ☑ microsaas        [Medium ●] — "indie builders        │
+  │                       discussing growth tools"           │
+  │  ☑ ecommerce        [Strong ●] — "active tool           │
+  │                       recommendation threads"            │
+  │  Mid-size:                                              │
+  │  ☑ sales            [Strong ●] — "high volume,          │
+  │                       frequent solution requests"        │
+  │  ☑ marketing        [Medium ●] — "GTM teams sharing     │
+  │                       tool stacks"                       │
+  │  Large:                                                 │
+  │  ☑ startups         [Medium ●] — "founders actively     │
+  │                       seek recommendations"              │
+  │  ☑ SaaS             [Strong ●] — "direct product        │
+  │                       category, high competitor chatter" │
   │                                                         │
   │  [+ Add subreddit]                                      │
   │  ┌─────────────────────────────┐                        │
@@ -684,7 +788,7 @@ Default suggestions:
 - Relevance scoring (Pass 2): ~5-25 Haiku calls (only posts passing semantic filter)
 - Thread analysis: ~1-5 Sonnet calls (on-demand, user-triggered)
 - Thread chat: ~1-10 Sonnet calls (on-demand, per user question)
-- Onboarding: ~3-5 Sonnet calls (one-time)
+- Onboarding: ~5-8 Sonnet calls (one-time, two-agent pipeline: Agent 1 business analysis + Agent 2 subreddit/keyword discovery)
 
 ### 6.3 OpenAI API (ChatGPT) — Comment Drafting
 
