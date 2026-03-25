@@ -184,6 +184,11 @@ reddit-intel/
 │   │   │   │   └── validate/route.ts # POST: check existence via Reddit API
 │   │   │   ├── settings/
 │   │   │   │   └── route.ts          # GET + PUT business profile, notifications
+│   │   │   ├── credits/
+│   │   │   │   ├── route.ts          # GET: balance + recent transactions
+│   │   │   │   └── check/route.ts    # POST: pre-check if user has enough credits
+│   │   │   ├── upgrade/
+│   │   │   │   └── route.ts          # POST: handle plan upgrade (Stripe checkout)
 │   │   │   ├── events/
 │   │   │   │   └── route.ts          # POST: batch frontend event logging
 │   │   │   └── auth/
@@ -216,7 +221,11 @@ reddit-intel/
 │   │   ├── settings/
 │   │   │   ├── business-profile.tsx  # Business profile form
 │   │   │   ├── notifications.tsx     # Notification preferences
-│   │   │   └── usage-billing.tsx     # Placeholder
+│   │   │   └── usage-billing.tsx     # Plan info + credit history + upgrade CTA
+│   │   ├── credits/
+│   │   │   ├── credit-badge.tsx      # Nav bar credit balance display (always visible)
+│   │   │   ├── credit-gate.tsx       # Pre-action credit check modal (estimate + confirm)
+│   │   │   └── upgrade-cta.tsx       # Upgrade prompts (trial expired, credits exhausted, etc.)
 │   │   └── layout/
 │   │       ├── app-shell.tsx         # Sidebar + top nav + main content area
 │   │       ├── top-nav.tsx           # Dashboard | Thread Analysis | Settings
@@ -244,6 +253,10 @@ reddit-intel/
 │   │   ├── scoring/
 │   │   │   ├── priority.ts          # Priority score calculation (40/30/15/15)
 │   │   │   └── recency.ts           # Recency tier function
+│   │   ├── credits/
+│   │   │   ├── manager.ts           # Credit check, deduct, grant, reset
+│   │   │   ├── pricing.ts           # Plan limits, credit allocations, subreddit caps
+│   │   │   └── types.ts             # Credit-related types
 │   │   └── events/
 │   │       ├── tracker.ts           # Frontend event batching utility
 │   │       └── types.ts             # Event taxonomy types
@@ -274,7 +287,7 @@ reddit-intel/
 ├── supabase/
 │   └── migrations/
 │       ├── 001_enable_extensions.sql     # pgvector, uuid-ossp
-│       ├── 002_create_tables.sql         # All 9 tables
+│       ├── 002_create_tables.sql         # All 11 tables (incl. credit_balances, credit_transactions)
 │       ├── 003_create_indexes.sql        # 4 composite indexes + HNSW
 │       ├── 004_create_rls_policies.sql   # RLS policies for every table
 │       └── 005_seed_subreddits.sql       # Pre-seed ~500 popular subreddits
@@ -338,7 +351,9 @@ CREATE TABLE users (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   email           VARCHAR NOT NULL UNIQUE,
   name            VARCHAR,
-  plan_tier       VARCHAR DEFAULT 'free' CHECK (plan_tier IN ('free', 'pro', 'enterprise')),
+  plan_tier       VARCHAR DEFAULT 'free' CHECK (plan_tier IN ('free', 'growth', 'custom')),
+  trial_started_at TIMESTAMPTZ,   -- Set on onboarding completion
+  trial_ends_at   TIMESTAMPTZ,    -- trial_started_at + 3 days
   auth_provider_id VARCHAR NOT NULL,
   created_at      TIMESTAMPTZ DEFAULT NOW(),
   updated_at      TIMESTAMPTZ DEFAULT NOW()
@@ -470,6 +485,33 @@ CREATE TABLE comment_drafts (
   created_at        TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Credit Balances (1:1 with users)
+CREATE TABLE credit_balances (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id         UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  balance         FLOAT NOT NULL DEFAULT 0.00,
+  lifetime_used   FLOAT NOT NULL DEFAULT 0.00,
+  last_reset_at   TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Credit Transactions (audit trail for all credit changes)
+CREATE TABLE credit_transactions (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  action_type     VARCHAR NOT NULL CHECK (action_type IN (
+    'thread_analysis', 'thread_chat', 'draft_generation', 'draft_regeneration',
+    'monthly_reset', 'plan_upgrade', 'trial_grant', 'trial_expiry', 'manual_adjustment'
+  )),
+  credits_used    FLOAT NOT NULL,  -- positive = deducted, negative = added
+  balance_after   FLOAT NOT NULL,
+  tokens_consumed INTEGER,         -- total LLM tokens (input + output)
+  model_used      VARCHAR,
+  reference_id    UUID,            -- FK to thread_analyses / comment_drafts / etc.
+  created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Event Logs
 CREATE TABLE event_logs (
   id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -509,6 +551,10 @@ CREATE INDEX idx_event_logs_user_created ON event_logs(user_id, created_at);
 
 -- Subreddit cache lookup
 CREATE INDEX idx_subreddit_cache_name ON subreddit_health_cache(subreddit_name);
+
+-- Credit queries
+CREATE INDEX idx_credit_transactions_user ON credit_transactions(user_id, created_at DESC);
+CREATE INDEX idx_credit_transactions_action ON credit_transactions(user_id, action_type);
 ```
 
 ### Migration 004: RLS Policies
@@ -561,6 +607,18 @@ CREATE POLICY "Users can CRUD own chat messages" ON thread_chat_messages
 -- comment_drafts: through businesses
 CREATE POLICY "Users can CRUD own drafts" ON comment_drafts
   FOR ALL USING (business_id IN (SELECT id FROM businesses WHERE user_id = auth.uid()));
+
+-- credit_balances: users see own balance only
+ALTER TABLE credit_balances ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can read own credit balance" ON credit_balances
+  FOR SELECT USING (user_id = auth.uid());
+-- Writes handled by service role (server-side only)
+
+-- credit_transactions: users see own transactions only
+ALTER TABLE credit_transactions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can read own credit transactions" ON credit_transactions
+  FOR SELECT USING (user_id = auth.uid());
+-- Writes handled by service role (server-side only)
 
 -- event_logs: users see own events only
 CREATE POLICY "Users can insert and read own events" ON event_logs
@@ -713,10 +771,17 @@ async function scanAllSubreddits():
         after: sub.last_seen_post_id
       });
 
-      // 3. Get all users monitoring this subreddit
-      users = SELECT b.*, ms.* FROM monitored_subreddits ms
+      // 3. Get all ELIGIBLE users monitoring this subreddit
+      //    - Growth/Custom: always eligible
+      //    - Free: only if trial is still active (NOW() < trial_ends_at)
+      users = SELECT b.*, ms.*, u.plan_tier, u.trial_ends_at
+              FROM monitored_subreddits ms
               JOIN businesses b ON ms.business_id = b.id
-              WHERE ms.subreddit_name = sub AND ms.is_active = true;
+              JOIN users u ON b.user_id = u.id
+              WHERE ms.subreddit_name = sub
+                AND ms.is_active = true
+                AND (u.plan_tier IN ('growth', 'custom')
+                     OR (u.plan_tier = 'free' AND u.trial_ends_at > NOW()));
 
       for each post in posts:
         // Dedup: skip if already alerted
@@ -782,15 +847,17 @@ AUTH FLOW:
   Every DB query automatically filtered by auth.uid()
 
 RLS CHAIN:
-  users          → auth.uid() = id
-  businesses     → user_id = auth.uid()
-  competitors    → business_id → businesses.user_id = auth.uid()
-  monitored_subs → business_id → businesses.user_id = auth.uid()
-  alerts         → business_id → businesses.user_id = auth.uid()
-  thread_analyses→ business_id → businesses.user_id = auth.uid()
-  chat_messages  → thread_analysis_id → thread_analyses → businesses
-  comment_drafts → business_id → businesses.user_id = auth.uid()
-  event_logs     → user_id = auth.uid() OR user_id IS NULL
+  users            → auth.uid() = id
+  businesses       → user_id = auth.uid()
+  competitors      → business_id → businesses.user_id = auth.uid()
+  monitored_subs   → business_id → businesses.user_id = auth.uid()
+  alerts           → business_id → businesses.user_id = auth.uid()
+  thread_analyses  → business_id → businesses.user_id = auth.uid()
+  chat_messages    → thread_analysis_id → thread_analyses → businesses
+  comment_drafts   → business_id → businesses.user_id = auth.uid()
+  credit_balances  → user_id = auth.uid() (READ only; writes via service role)
+  credit_txns      → user_id = auth.uid() (READ only; writes via service role)
+  event_logs       → user_id = auth.uid() OR user_id IS NULL
 
 WORKER ACCESS:
   Uses service_role key (bypasses RLS)
@@ -889,81 +956,103 @@ Cursor-based (not OFFSET) for all list endpoints. Cursor = `created_at` timestam
 ## 12. Build Order (Implementation Sequence)
 
 ```
-PHASE 1: Foundation (Week 1)
+PHASE 1: Foundation
 ═══════════════════════════════════════════════
+Ref: TECH-SPEC §1-5, DESIGN-SYSTEM.md, PRODUCT-SPEC §3
 ├── 1.1 Next.js project setup (pnpm, TypeScript, Tailwind, shadcn/ui)
-├── 1.2 Supabase project + run migrations 001-005
+├── 1.2 Supabase project + run migrations 001-005 (all 11 tables)
 ├── 1.3 Supabase Auth integration (login, signup, middleware)
 ├── 1.4 App shell (sidebar, top nav, dark theme from DESIGN-SYSTEM.md)
 ├── 1.5 Environment variables setup (.env.local)
-└── 1.6 Deploy skeleton to Vercel (verify builds)
+├── 1.6 Credits library (src/lib/credits/) — manager, pricing constants, types
+└── 1.7 Deploy skeleton to Vercel (verify builds)
 
-PHASE 2: Onboarding (Week 2)
+PHASE 2: Onboarding
 ═══════════════════════════════════════════════
+Ref: PRODUCT-SPEC §5.1, TECH-SPEC §6 (LLM client)
 ├── 2.1 Onboarding Step 1: URL input page
 ├── 2.2 Agent 1 API route (website analysis → business context)
 ├── 2.3 Agent 2 API route (subreddit + keyword recommendations)
 ├── 2.4 Onboarding Step 2: profile + keywords + competitors + subreddits
 ├── 2.5 Subreddit validation API (Reddit API existence check)
 ├── 2.6 Embedding vector generation (pgvector storage)
-└── 2.7 First-time scan trigger (webhook to Railway)
+├── 2.7 Trial activation: set trial_started_at, trial_ends_at, grant 25.00 credits
+└── 2.8 First-time scan trigger (webhook to Railway)
 
-PHASE 3: Scanner Worker (Week 2-3)
+PHASE 3: Scanner Worker
 ═══════════════════════════════════════════════
+Ref: PRODUCT-SPEC §7.1, TECH-SPEC §7 (worker design)
 ├── 3.1 Railway worker setup (Node.js + Express)
 ├── 3.2 ML model loading (Transformers.js + MiniLM)
 ├── 3.3 Health endpoint + scan-now webhook
 ├── 3.4 Reddit API client + rate limiter
 ├── 3.5 Pass 1: pre-filter (embeddings + keyword + regex)
 ├── 3.6 Pass 2: LLM scoring (Haiku + failover)
-├── 3.7 Priority calculation
-├── 3.8 Alert creation + email sending (SES)
-├── 3.9 Scanner loop (setInterval + mutex + circuit breaker)
-└── 3.10 Deploy worker to Railway
+├── 3.7 Priority calculation (40/30/15/15 weights)
+├── 3.8 Post category classification (5 categories per PRODUCT-SPEC §7.1.1)
+├── 3.9 Plan eligibility check (skip expired free trials in scan loop)
+├── 3.10 Alert creation + email sending (SES)
+├── 3.11 Scanner loop (setInterval + mutex + circuit breaker)
+└── 3.12 Deploy worker to Railway
 
-PHASE 4: Dashboard (Week 3)
+PHASE 4: Dashboard
 ═══════════════════════════════════════════════
+Ref: PRODUCT-SPEC §5.2, DESIGN-SYSTEM.md (colors, spacing, components)
 ├── 4.1 Alert list API (CRUD + filters + cursor pagination)
-├── 4.2 Alert card component (priority, category, CTAs)
+├── 4.2 Alert card component (priority dot, category tag, meta, CTAs)
 ├── 4.3 New/Seen split + intersection observer for seen tracking
-├── 4.4 Filter by + Sort by dropdowns
-├── 4.5 Monitored subreddits section
-└── 4.6 Empty states
+├── 4.4 Filter by + Sort by hover dropdowns
+├── 4.5 Monitored subreddits section (health tags, lock icon, slot counter)
+├── 4.6 Credit balance badge in top nav (always visible)
+├── 4.7 Empty states + trial expired state + upgrade CTAs
+└── 4.8 Trial countdown banner for free users
 
-PHASE 5: Thread Analysis (Week 4)
+PHASE 5: Thread Analysis + Credits Integration
 ═══════════════════════════════════════════════
+Ref: PRODUCT-SPEC §5.3, §12.2 (credits UX flow)
 ├── 5.1 Thread analysis API (fetch comments + Sonnet analysis)
-├── 5.2 Analysis view component (summary, pain points, intent, competitive)
-├── 5.3 Chat interface (follow-up questions + streaming responses)
-├── 5.4 Suggested questions chips
-├── 5.5 Sidebar history (past analyses grouped by date)
-├── 5.6 Manual URL input in sidebar
-└── 5.7 Token limit handling (sliding window for long chats)
+├── 5.2 Credit gate: pre-check balance → estimate → confirm → deduct after
+├── 5.3 Analysis view component (summary, pain points, intent, competitive)
+├── 5.4 Chat interface (follow-up questions + streaming + credit deduction per msg)
+├── 5.5 Suggested questions chips
+├── 5.6 Sidebar history (past analyses grouped by date)
+├── 5.7 Manual URL input in sidebar
+├── 5.8 Token limit handling (sliding window for long chats)
+└── 5.9 Insufficient credits state + upgrade CTA
 
-PHASE 6: Comment Drafting (Week 4)
+PHASE 6: Comment Drafting + Credits Integration
 ═══════════════════════════════════════════════
+Ref: PRODUCT-SPEC §5.4, §12.2 (credits deduction per draft)
 ├── 6.1 Draft generation API (GPT-4o + subreddit rules + brand voice)
-├── 6.2 Draft card component (Copy, Edit, Regenerate, Approve)
-├── 6.3 Per-draft regeneration
-├── 6.4 Reply-to selector (post vs specific comment)
-└── 6.5 Edit mode (inline text editing)
+├── 6.2 Credit gate for draft generation + per-draft regeneration
+├── 6.3 Draft card component (Copy, Edit, Regenerate, Approve)
+├── 6.4 Per-draft regeneration (credit deduction per regen)
+├── 6.5 Reply-to selector (post vs specific comment)
+└── 6.6 Edit mode (inline text editing — no credit cost)
 
-PHASE 7: Settings (Week 5)
+PHASE 7: Settings + Billing
 ═══════════════════════════════════════════════
+Ref: PRODUCT-SPEC §5.5, §12
 ├── 7.1 Business Profile tab (edit all fields, add/remove keywords etc.)
 ├── 7.2 Re-compute embeddings on profile edit
 ├── 7.3 Notifications tab (email on/off, threshold)
-├── 7.4 Usage & Billing tab (placeholder)
-└── 7.5 Subreddit add/remove with health hover
+├── 7.4 Usage & Billing tab (plan info, credit balance, transaction history, upgrade)
+├── 7.5 Subreddit add/remove with health hover + plan-based limit (3 free / 10 growth)
+├── 7.6 Stripe integration (Growth plan checkout + subscription management)
+├── 7.7 Stripe webhook: handle subscription.created → upgrade plan + grant credits
+└── 7.8 Monthly credit reset (Stripe billing cycle → reset balance to 250.00)
 
-PHASE 8: Polish + Testing (Week 5)
+PHASE 8: Polish + Testing
 ═══════════════════════════════════════════════
+Ref: PRODUCT-SPEC §10, TECH-SPEC §10 (testing strategy)
 ├── 8.1 Event logging (frontend tracker + /api/events)
 ├── 8.2 Error states for all views (per PRODUCT-SPEC §9)
 ├── 8.3 LLM failover integration testing
-├── 8.4 E2E test suite (4 Playwright flows)
-├── 8.5 Unit test suite (scoring, pre-filter, rate limiter)
-└── 8.6 LLM eval baseline (20 sample posts)
+├── 8.4 Credit system edge cases (concurrent deductions, race conditions, 0 balance)
+├── 8.5 Trial expiry automation (cron: expire credits, stop scanning)
+├── 8.6 E2E test suite (5 Playwright flows: onboarding, dashboard, analysis, drafts, settings)
+├── 8.7 Unit test suite (scoring, pre-filter, rate limiter, credit manager)
+└── 8.8 LLM eval baseline (20 sample posts)
 ```
 
 ---
@@ -983,24 +1072,103 @@ PHASE 8: Polish + Testing (Week 5)
 | Chat token limit exceeded | LLM call fails or truncates | Sliding window: keep analysis + last 10 messages, summarize older ones | Unit: truncation logic |
 | Railway cold start after restart | Misses one scan window | Always-on config. Model loads in <30s. First scan runs immediately after load | Manual: verify Railway config |
 | RLS policy misconfigured | Data leak (User A sees User B's data) | Test all RLS policies in migration. Integration tests verify cross-user isolation | Integration: RLS validation |
+| Concurrent credit deductions | Balance goes negative (double-spend) | Atomic DB update: `UPDATE SET balance = balance - X WHERE balance >= X`. If 0 rows affected → insufficient credits | Unit: concurrent deduction |
+| Trial expiry during active session | User mid-analysis when trial expires | Credits checked per-action, not per-session. If credits remain, action completes. New actions blocked after expiry | Integration: mid-session expiry |
+| Stripe webhook fails | User paid but plan not upgraded | Webhook retry (Stripe retries 3x). Fallback: manual check via Stripe dashboard. Log `plan.upgrade_failed` event | Integration: webhook failure |
 
 ---
 
-## 14. Cost Estimates (Per User, Per Month)
+## 14. Pricing & Credits
 
-Based on 10 subreddits, 15-min scan cycles, ~30% Pass 1 filter rate:
+### Plan Tiers
 
-| Component | Monthly Cost |
-|-----------|-------------|
+| | Free | Growth | Custom |
+|---|---|---|---|
+| **Price** | $0 | $39/month | Contact us |
+| **Trial** | 3-day full access | — | — |
+| **Subreddits** | 3 | 10 | 10+ per business |
+| **Businesses** | 1 | 1 | Multiple |
+| **Scanning** | Pass 1+2, 3 days | Pass 1+2, continuous | Pass 1+2, continuous |
+| **Credits** | 25.00 (lifetime) | 250.00/month | Negotiated |
+| **Email alerts** | 3 days | Unlimited | Unlimited |
+
+### Credits System
+
+```
+1 credit ≈ 1,000 LLM tokens (input + output combined)
+Credits are fractional (2 decimal places): 17.54, not 18
+
+CREDIT LIFECYCLE:
+  Free user:   signup → onboarding → grant 25.00 credits → use during 3-day trial → expire
+  Growth user: subscribe → grant 250.00 credits → use during month → reset on billing anniversary
+  Custom user: subscribe → grant N credits → reset monthly → manual top-up if needed
+
+CREDIT DEDUCTION FLOW:
+  User clicks "Analyze Thread"
+    → API checks credit_balances.balance >= minimum estimate (2.00)
+    → If insufficient → return 402 + {error: 'insufficient_credits', balance: X}
+    → If sufficient → run LLM call
+    → After completion → calculate exact credits: tokens_used / 1000
+    → Deduct from credit_balances (atomic UPDATE ... SET balance = balance - X)
+    → INSERT into credit_transactions (audit trail)
+    → Return result + {credits_used: 3.24, balance_remaining: 15.26}
+```
+
+**Credit costs by action:**
+
+| Action | Avg tokens | Avg credits | User sees |
+|--------|-----------|------------|-----------|
+| Thread analysis (short) | ~2,500 | 2-3 | "2-5 credits" |
+| Thread analysis (medium) | ~4,000 | 3-4 | "2-5 credits" |
+| Thread analysis (long) | ~6,000 | 5-6 | "5-8 credits" |
+| Draft session (2 drafts) | ~3,000 | 2-3 | "2-4 credits" |
+| Regenerate single draft | ~1,500 | 1-2 | "1-2 credits" |
+| Chat follow-up | ~2,000 | 1-2 | "1-2 credits" |
+
+### Free Plan Trial Lifecycle
+
+```
+SIGNUP → ONBOARDING → TRIAL ACTIVE (3 days) → TRIAL EXPIRED
+
+                         ┌── trial_started_at = NOW()
+  Onboarding complete ───┤── trial_ends_at = NOW() + 3 days
+                         ├── credit_balances.balance = 25.00
+                         └── Trigger first scan (last 24 hrs)
+
+  Scanner eligibility check (every 15 min):
+    WHERE plan_tier = 'free' AND trial_ends_at > NOW()
+    → If trial expired: skip user (no scanning, no new alerts)
+
+  Trial expires:
+    → credit_balances.balance = 0.00
+    → INSERT credit_transactions(action_type='trial_expiry')
+    → Historical data stays (read-only)
+    → Dashboard shows upgrade CTA
+```
+
+### Cost Economics
+
+Based on 10 subreddits, 3.5 posts/sub/15min, ~35% Pass 1 filter rate:
+
+| Component | Monthly Cost (Growth) |
+|-----------|----------------------|
 | Pass 1 (local model) | $0.00 |
-| Pass 2 (Claude Haiku) | ~$14.00 |
-| Thread analysis (Sonnet, ~30/mo) | ~$1.83 |
-| Comment drafting (GPT-4o, ~20/mo) | ~$0.30 |
-| Onboarding (one-time, amortized) | ~$0.06 |
+| Pass 2 (Claude Haiku) | ~$6.56 |
+| Credits usage (250 credits avg) | ~$2.00 |
 | Amazon SES | ~$0.01 |
-| **Total per user** | **~$16.20/mo** |
+| **Total per Growth user** | **~$8.56/mo** |
 
-**Minimum viable price: $49/mo** (67% margin after LLM costs, before infra).
+| Component | Lifetime Cost (Free) |
+|-----------|---------------------|
+| Scanning (3 days, 3 subs) | $0.20 |
+| Credits usage (25 credits) | $0.20 |
+| **Total per Free user** | **~$0.40** |
+
+| Plan | Revenue | LLM Cost | Gross Margin |
+|------|---------|----------|-------------|
+| Free | $0 | $0.40 (lifetime) | N/A (acquisition) |
+| Growth | $39/mo | $8.56/mo | **78%** |
+| Custom (2 biz) | ~$99/mo | ~$17.12/mo | **83%** |
 
 | Infra | Monthly Cost |
 |-------|-------------|
@@ -1009,4 +1177,4 @@ Based on 10 subreddits, 15-min scan cycles, ~30% Pass 1 filter rate:
 | Supabase (Free → Pro at scale) | $0-25/mo |
 | **Total infra** | **~$35-55/mo** |
 
-Break-even: 3-4 paying customers at $49/mo.
+Break-even: 2 paying Growth customers at $39/mo.
