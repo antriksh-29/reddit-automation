@@ -97,7 +97,10 @@ A SaaS platform that helps GTM teams, indie hackers, and marketing agencies find
 id              UUID        PRIMARY KEY
 email           VARCHAR     NOT NULL UNIQUE
 name            VARCHAR
-plan_tier       ENUM        ('free', 'pro', 'enterprise') DEFAULT 'free'
+plan_tier       ENUM        ('free', 'growth', 'custom') DEFAULT 'free'
+trial_started_at TIMESTAMP  (set on onboarding completion — NULL until then)
+trial_ends_at   TIMESTAMP   (trial_started_at + 3 days — NULL until then)
+is_trial_active BOOLEAN     GENERATED (NOW() < trial_ends_at AND plan_tier = 'free')
 auth_provider_id VARCHAR    NOT NULL (Clerk user ID)
 created_at      TIMESTAMP   DEFAULT NOW()
 updated_at      TIMESTAMP   DEFAULT NOW()
@@ -236,6 +239,33 @@ tone            VARCHAR     (e.g., 'helpful', 'conversational', 'technical')
 rule_check      JSONB       (subreddit rules checked, any flags — internal only, not shown to user)
 approval_state  ENUM        ('pending', 'approved', 'rejected') DEFAULT 'pending'
 created_at      TIMESTAMP   DEFAULT NOW()
+```
+
+### credit_balances
+```
+id              UUID        PRIMARY KEY
+user_id         UUID        FK → users.id (UNIQUE — one balance per user)
+balance         FLOAT       NOT NULL DEFAULT 0.00 (current credit balance, 2 decimal precision)
+lifetime_used   FLOAT       NOT NULL DEFAULT 0.00 (total credits ever consumed)
+last_reset_at   TIMESTAMP   (for Growth/Custom: last monthly reset date)
+created_at      TIMESTAMP   DEFAULT NOW()
+updated_at      TIMESTAMP   DEFAULT NOW()
+```
+
+### credit_transactions
+```
+id              UUID        PRIMARY KEY
+user_id         UUID        FK → users.id
+action_type     ENUM        ('thread_analysis', 'thread_chat', 'draft_generation', 'draft_regeneration', 'monthly_reset', 'plan_upgrade', 'manual_adjustment')
+credits_used    FLOAT       NOT NULL (positive = deducted, negative = added/reset)
+balance_after   FLOAT       NOT NULL (balance after this transaction)
+tokens_consumed INTEGER     (total LLM tokens for this action — input + output)
+model_used      VARCHAR     (e.g., 'claude-sonnet', 'gpt-4o')
+reference_id    UUID        (FK to thread_analyses.id, comment_drafts.id, etc.)
+created_at      TIMESTAMP   DEFAULT NOW()
+
+INDEX ON (user_id, created_at)
+INDEX ON (user_id, action_type)
 ```
 
 ### event_logs
@@ -972,8 +1002,10 @@ Steps:
 | XSS from Reddit content in dashboard | Sanitize all Reddit-sourced HTML/markdown before rendering. Use DOMPurify or equivalent. |
 | LLM prompt injection via Reddit posts | Reddit content passed as user content in LLM calls, never as system prompt. |
 | Reddit OAuth credential exposure | Store in environment variables. Never client-side. |
-| Abuse: user creates too many subreddits | Enforce per-user limit: max 10 subreddits. Application-layer check. |
-| Rate limit exhaustion by single user | Per-user subreddit caps ensure fair distribution of API budget. |
+| Abuse: user creates too many subreddits | Enforce per-user limit: max 10 (Growth), 3 (Free). Application-layer check. |
+| Rate limit exhaustion by single user | Per-user subreddit caps + plan-based limits ensure fair distribution. |
+| Credit manipulation | Credit deductions are server-side only. Token counts from LLM responses, not client input. All transactions logged. |
+| Free tier abuse (multiple signups) | Rate limit signups by IP + email domain. Flag accounts with same business URL. |
 | LLM API key exposure | Server-side only. Never sent to client. Separate keys for Claude and OpenAI. |
 
 ---
@@ -1026,6 +1058,10 @@ Steps:
 | `sort.changed` | `{sort_type}` | Dashboard sort changed |
 | `page.viewed` | `{page, duration_ms}` | Page navigation |
 | `suggested_question.clicked` | `{thread_analysis_id, question_text}` | User clicks a suggested question |
+| `credits.insufficient` | `{action_type, credits_required, credits_available}` | User tried action with insufficient credits |
+| `credits.balance_viewed` | `{balance}` | User hovers/clicks credit balance |
+| `upgrade.cta_shown` | `{trigger: 'credits_exhausted'\|'trial_expired'\|'subreddit_limit'}` | Upgrade CTA displayed |
+| `upgrade.cta_clicked` | `{trigger, destination}` | User clicks upgrade CTA |
 
 **Backend Events (source: 'backend'):**
 | Event Type | Payload | Trigger |
@@ -1041,6 +1077,12 @@ Steps:
 | `thread.analyzed` | `{thread_id, comments_count, model, duration_ms, tokens_used}` | Thread analysis completed |
 | `thread.chat_response` | `{thread_analysis_id, model, duration_ms, tokens_used}` | Chat follow-up answered |
 | `draft.generated` | `{alert_id, tone, model, duration_ms, tokens_used}` | Comment draft generated |
+| `credits.deducted` | `{user_id, action_type, credits_used, balance_after, tokens_consumed, model}` | Credits deducted for LLM action |
+| `credits.reset` | `{user_id, old_balance, new_balance: 250}` | Monthly credit reset (Growth plan) |
+| `credits.expired` | `{user_id, expired_balance}` | Free trial credits expired |
+| `trial.started` | `{user_id, trial_ends_at}` | Free trial activated |
+| `trial.expired` | `{user_id, credits_remaining}` | Free trial ended |
+| `plan.upgraded` | `{user_id, from_plan, to_plan}` | User upgraded plan |
 | `email.sent` | `{alert_id, user_id, priority_level}` | Alert email sent |
 | `email.failed` | `{alert_id, user_id, error, retry_count}` | Alert email failed |
 | `email.retry` | `{alert_id, attempt_number}` | Email retry attempted |
@@ -1131,9 +1173,138 @@ Reddit API calls scale with unique subreddits. Scoring calls scale with (posts �
 - **RLS policies** — Design explicit RLS policies for each table. Key chain: `alerts` → `monitored_subreddits.business_id` → `businesses.user_id` → `auth.uid()`. Test RLS policies in migration before deploying.
 - **Scan overlap prevention** — Use a simple mutex (DB row lock or in-memory flag) to prevent overlapping scan cycles if a cycle runs long.
 
-## 12. Remaining Open Decisions (for implementation)
+## 12. Pricing & Credits System
+
+### 12.1 Plan Tiers
+
+| | Free | Growth | Custom |
+|---|---|---|---|
+| **Price** | $0 | $39/month | Contact us |
+| **Trial duration** | 3 days full access | — | — |
+| **Subreddits** | 3 | 10 | 10+ per business |
+| **Businesses** | 1 | 1 | Multiple |
+| **Alert scanning** | Full (Pass 1 + Pass 2), 3 days only | Full, continuous (every 15 min) | Full, continuous |
+| **Email alerts** | 3 days | Unlimited | Unlimited |
+| **Credits** | 25.00 (one-time, lifetime) | 250.00/month (resets monthly) | Negotiated (500-2000+/month) |
+| **Thread Analysis** | ✓ (uses credits) | ✓ (uses credits) | ✓ (uses credits) |
+| **Thread Chat** | ✓ (uses credits) | ✓ (uses credits) | ✓ (uses credits) |
+| **Comment Drafting** | ✓ (uses credits) | ✓ (uses credits) | ✓ (uses credits) |
+| **Analysis History** | 3-day data retained | Full history | Full history |
+| **After trial expires** | Scanning stops, credits expire, historical data visible. Account remains. | — | — |
+
+### 12.2 Credits System
+
+**Core mechanics:**
+- 1 credit ≈ 1,000 LLM tokens consumed (input + output combined)
+- Credits are **fractional** — balance displayed to 2 decimal places (e.g., 17.54)
+- Credits are **fungible** — spend on any credit-consuming feature, no separate pools
+- Before each action: show estimated credit range
+- After each action: show exact credits used + remaining balance
+
+**Credit costs by action:**
+
+| Action | Avg tokens | Avg credits | Range shown to user |
+|--------|-----------|------------|-------------------|
+| Thread analysis (short, <30 comments) | ~2,500 | 2-3 | "2-5 credits" |
+| Thread analysis (medium, 30-100 comments) | ~4,000 | 3-4 | "2-5 credits" |
+| Thread analysis (long, 100+ comments) | ~6,000 | 5-6 | "5-8 credits" |
+| Draft session (generates 2 drafts) | ~3,000 | 2-3 | "2-4 credits" |
+| Regenerate single draft | ~1,500 | 1-2 | "1-2 credits" |
+| Thread chat follow-up question | ~2,000 | 1-2 | "1-2 credits" |
+
+**What each plan's credits get you (approximate):**
+
+| | Free (25 credits) | Growth (250 credits/mo) |
+|---|---|---|
+| Thread analyses only | ~6-8 | ~60-80 |
+| Draft sessions only | ~8-12 | ~80-120 |
+| Chat follow-ups only | ~12-20 | ~120-200 |
+| Typical mix (analyses + drafts + chat) | ~3 analyses + 3 drafts + 4 chats | ~30 analyses + 30 drafts + 40 chats |
+
+**Credit UX flow:**
+```
+┌─────────────────────────────────────────┐
+│  Analyze this thread?                    │
+│  Estimated: 2-5 credits                 │
+│  (depends on thread length)             │
+│                                          │
+│  Your balance: 18.50 credits            │
+│  [Analyze →]                            │
+└─────────────────────────────────────────┘
+         │
+         ▼ (analysis runs)
+┌─────────────────────────────────────────┐
+│  ✓ Analysis complete.                    │
+│  Used: 3.24 credits                     │
+│  Remaining: 15.26 credits               │
+└─────────────────────────────────────────┘
+```
+
+**Insufficient credits:**
+- If balance < minimum estimate for action → button disabled
+- Show: "Not enough credits. [Upgrade to Growth →]" (free users) or "Credits reset on [date]" (Growth users)
+- Growth users who consistently run out → surface Custom plan CTA
+
+**Credit balance display:** Always visible in the top nav bar as a simple number (e.g., "15.26 credits"). Not a progress bar — just a clean number next to a small icon.
+
+**Growth plan monthly reset:**
+- Credits reset to 250.00 on the billing anniversary date
+- Unused credits do NOT roll over (simplicity > generosity for MVP)
+- Credit transactions logged in `credit_transactions` table for audit trail
+- `last_reset_at` updated in `credit_balances`
+
+### 12.3 Free Plan Lifecycle
+
+```
+SIGNUP → ONBOARDING → TRIAL ACTIVE (3 days) → TRIAL EXPIRED → UPGRADE or DORMANT
+
+Day 0: User signs up, completes onboarding
+  → trial_started_at = NOW()
+  → trial_ends_at = NOW() + 3 days
+  → credit_balance = 25.00
+  → First scan triggered immediately (last 24 hrs)
+  → 15-min scanning begins
+
+Day 1-3: Full platform access
+  → Scanning active (Pass 1 + Pass 2, 3 subreddits)
+  → Email alerts active
+  → Credits available for analysis/drafts/chat
+  → Credit balance visible, decreasing with usage
+
+Day 3 (trial expires):
+  → Scanning stops (cron skips this user)
+  → Email alerts stop
+  → Remaining credits expire (balance set to 0.00)
+  → Historical alerts + analyses remain visible (read-only)
+  → Dashboard shows: "Your free trial has ended. Upgrade to Growth to resume monitoring."
+  → Account remains — can log in, view historical data, but can't trigger new actions
+```
+
+### 12.4 Custom Plan (Agencies)
+
+- **Negotiated via sales calls** — no self-serve signup for Custom
+- **Multiple businesses per account** — each business has its own subreddits, keywords, competitors, alerts
+- **Pricing factors:** number of businesses × subreddits per business × monthly credit volume
+- **Billing:** Monthly invoice or annual contract (15% annual discount)
+- **Credits:** 500-2000+/month, negotiated based on expected usage
+- **Subreddits:** 10+ per business, negotiated
+- **Dedicated onboarding:** Founder-led setup call for first 10 Custom accounts
+
+### 12.5 Cost Economics
+
+| Plan | Revenue | Scanning cost | Credit cost (avg) | Total LLM | Gross margin |
+|------|---------|--------------|-------------------|-----------|-------------|
+| Free | $0 | $0.20 (3 days) | $0.20 (25 credits) | **$0.40** | N/A (acquisition cost) |
+| Growth | $39/mo | $6.56/mo | $2.00/mo (250 credits) | **$8.56** | **78%** |
+| Custom (2 biz) | ~$99/mo | $13.12/mo | $4.00/mo (500 credits) | **$17.12** | **83%** |
+| Custom (5 biz) | ~$199/mo | $32.80/mo | $8.00/mo (1000 credits) | **$40.80** | **80%** |
+
+---
+
+## 13. Remaining Open Decisions (for implementation)
 
 1. **LLM prompt templates:** Exact prompts for relevance scoring, health assessment, thread analysis, thread chat, comment drafting — to be iterated during implementation
-2. **Pricing tiers:** What features are free vs. paid, what are the limits — product decision
-3. **Thread comment pagination:** Fetch all comments at once vs. paginate for large threads (>100 comments)
-4. **Frontend event batching:** Custom lightweight utility (batch 10 events or 30s, POST to `/api/events`)
+2. **Thread comment pagination:** Fetch all comments at once vs. paginate for large threads (>100 comments)
+3. **Frontend event batching:** Custom lightweight utility (batch 10 events or 30s, POST to `/api/events`)
+4. **Payment integration:** Stripe for Growth plan billing + credit reset automation
+5. **Custom plan CRM:** How to manage Custom plan inquiries (Typeform → email? Calendly?)
