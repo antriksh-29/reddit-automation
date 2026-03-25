@@ -345,6 +345,8 @@ Each keyword includes a one-line rationale and is tagged as PRIMARY or DISCOVERY
 
 **Note:** Competitor names are NOT included in keywords — they are already captured in the competitors section and are matched separately during scanning.
 
+**Note:** The Primary/Discovery keyword categorization and Niche/Mid-size/Large subreddit grouping are internal to the LLM prompt only. The user sees a flat list of keywords and subreddits — no categories or rationales exposed in the UI.
+
 **Flow:**
 ```
 Step 1: Website Analysis
@@ -362,7 +364,7 @@ Step 1: Website Analysis
 
 Step 2: Business Profile + Monitoring Setup (single page, all editable)
   ┌─────────────────────────────────────────────────────────┐
-  │  BUSINESS PROFILE (from Agent 1)                        │
+  │  BUSINESS PROFILE                                       │
   │  Business Name: [Example Inc        ] (editable)        │
   │  Description:   [AI-generated...    ] (editable)        │
   │  Target Audience: [AI-generated..   ] (editable)        │
@@ -370,39 +372,18 @@ Step 2: Business Profile + Monitoring Setup (single page, all editable)
   │                                                         │
   │  ─────────────────────────────────────────────────────  │
   │                                                         │
-  │  KEYWORDS (from Agent 2)                                │
-  │  Primary:                                               │
-  │  [find relevant Reddit posts ✕] [Reddit marketing      │
-  │   tool ✕] [social listening tool ✕] [monitor Reddit     │
-  │   for leads ✕] [missing relevant posts ✕]               │
-  │  Discovery:                                             │
-  │  [track competitor mentions ✕] [community-led           │
-  │   growth ✕] [how to find leads on Reddit ✕]             │
-  │  [automate Reddit monitoring ✕] [Reddit lead gen ✕]     │
-  │  [+ add keyword]                                        │
+  │  KEYWORDS                                               │
+  │  [keyword1 ✕] [keyword2 ✕] [keyword3 ✕] [+ add]       │
   │                                                         │
-  │  COMPETITORS (from Agent 1)                             │
+  │  COMPETITORS                                            │
   │  [Competitor A ✕] (auto) [Competitor B ✕] (auto)       │
   │  [+ Add competitor]                                     │
   │                                                         │
-  │  SUBREDDITS TO MONITOR (from Agent 2, max 10)           │
-  │  Niche:                                                 │
-  │  ☑ coldcalling      [Strong ●] — "your ICP asks for    │
-  │                       sales tools here daily"            │
-  │  ☑ microsaas        [Medium ●] — "indie builders        │
-  │                       discussing growth tools"           │
-  │  ☑ ecommerce        [Strong ●] — "active tool           │
-  │                       recommendation threads"            │
-  │  Mid-size:                                              │
-  │  ☑ sales            [Strong ●] — "high volume,          │
-  │                       frequent solution requests"        │
-  │  ☑ marketing        [Medium ●] — "GTM teams sharing     │
-  │                       tool stacks"                       │
-  │  Large:                                                 │
-  │  ☑ startups         [Medium ●] — "founders actively     │
-  │                       seek recommendations"              │
-  │  ☑ SaaS             [Strong ●] — "direct product        │
-  │                       category, high competitor chatter" │
+  │  SUBREDDITS TO MONITOR (max 10)                         │
+  │  AI-suggested subreddits:                               │
+  │  ☑ saas            [Strong ●] (hover for details)      │
+  │  ☑ startups        [Medium ●] (hover for details)      │
+  │  ☐ smallbusiness   [Weak ●]   (hover for details)      │
   │                                                         │
   │  [+ Add subreddit]                                      │
   │  ┌─────────────────────────────┐                        │
