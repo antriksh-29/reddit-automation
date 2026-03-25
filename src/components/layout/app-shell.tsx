@@ -1,15 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-
-/**
- * App Shell — top nav + main content area.
- * Ref: PRODUCT-SPEC.md §5.2 (navigation), DESIGN-SYSTEM.md (colors, spacing)
- *
- * Nav items: Dashboard | Thread Analysis | Settings
- * Credit badge always visible in top-right.
- */
+import { usePathname, useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 
 const NAV_ITEMS = [
   { label: "Dashboard", href: "/dashboard" },
@@ -19,33 +12,70 @@ const NAV_ITEMS = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+
+  async function handleSignOut() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.push("/login");
+  }
 
   return (
-    <div className="flex min-h-screen flex-col bg-bg-primary">
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", backgroundColor: "#0A0A0A" }}>
       {/* Top Navigation */}
-      <header className="sticky top-0 z-50 border-b border-border-default bg-bg-surface/80 backdrop-blur-sm">
-        <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4">
-          {/* Logo + Nav */}
-          <div className="flex items-center gap-8">
+      <header
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+          borderBottom: "1px solid #2A2A2A",
+          backgroundColor: "rgba(20, 20, 20, 0.85)",
+          backdropFilter: "blur(12px)",
+        }}
+      >
+        <div
+          style={{
+            maxWidth: "1280px",
+            margin: "0 auto",
+            display: "flex",
+            height: "56px",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "0 16px",
+          }}
+        >
+          {/* Left: Logo + Nav */}
+          <div style={{ display: "flex", alignItems: "center", gap: "32px" }}>
             <Link
               href="/dashboard"
-              className="font-[Satoshi] text-lg font-bold text-text-primary"
+              style={{
+                fontFamily: "'Satoshi', system-ui, sans-serif",
+                fontSize: "18px",
+                fontWeight: 700,
+                color: "#F5F5F3",
+                textDecoration: "none",
+              }}
             >
-              RedditIntel
+              Arete
             </Link>
 
-            <nav className="flex items-center gap-1">
+            <nav style={{ display: "flex", alignItems: "center", gap: "4px" }}>
               {NAV_ITEMS.map((item) => {
                 const isActive = pathname.startsWith(item.href);
                 return (
                   <Link
                     key={item.href}
                     href={item.href}
-                    className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-[var(--duration-short)] ${
-                      isActive
-                        ? "bg-bg-elevated text-text-primary"
-                        : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-                    }`}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: "6px",
+                      fontSize: "14px",
+                      fontWeight: 500,
+                      textDecoration: "none",
+                      color: isActive ? "#F5F5F3" : "#A3A3A0",
+                      backgroundColor: isActive ? "#1C1C1C" : "transparent",
+                      fontFamily: "'DM Sans', system-ui, sans-serif",
+                    }}
                   >
                     {item.label}
                   </Link>
@@ -54,22 +84,63 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </nav>
           </div>
 
-          {/* Right side: Credits + User */}
-          <div className="flex items-center gap-4">
-            {/* Credit balance badge — placeholder, wired up in Phase 4 */}
-            <div className="flex items-center gap-1.5 rounded-full bg-bg-elevated px-3 py-1 text-sm">
-              <span className="text-text-muted">Credits:</span>
-              <span className="font-medium text-accent">--</span>
+          {/* Right: Credits + Sign Out */}
+          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+            {/* Credit badge */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                backgroundColor: "#1C1C1C",
+                borderRadius: "9999px",
+                padding: "4px 12px",
+                fontSize: "13px",
+              }}
+            >
+              <span style={{ color: "#6B6B68" }}>Credits:</span>
+              <span style={{ fontWeight: 600, color: "#E8651A" }}>--</span>
             </div>
 
-            {/* User avatar placeholder */}
-            <div className="h-8 w-8 rounded-full bg-bg-elevated" />
+            {/* Sign Out */}
+            <button
+              onClick={handleSignOut}
+              style={{
+                padding: "6px 14px",
+                borderRadius: "6px",
+                fontSize: "13px",
+                fontWeight: 500,
+                color: "#A3A3A0",
+                backgroundColor: "transparent",
+                border: "1px solid #2A2A2A",
+                cursor: "pointer",
+                fontFamily: "'DM Sans', system-ui, sans-serif",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = "#1C1C1C";
+                e.currentTarget.style.color = "#F5F5F3";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = "transparent";
+                e.currentTarget.style.color = "#A3A3A0";
+              }}
+            >
+              Sign out
+            </button>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">
+      <main
+        style={{
+          maxWidth: "1280px",
+          margin: "0 auto",
+          width: "100%",
+          flex: 1,
+          padding: "24px 16px",
+        }}
+      >
         {children}
       </main>
     </div>

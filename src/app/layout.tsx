@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Reddit Lead Intelligence",
+  title: "Arete — Reddit Lead Intelligence",
   description:
     "Monitor Reddit for relevant posts, analyze threads with AI, and draft contextual responses.",
 };
