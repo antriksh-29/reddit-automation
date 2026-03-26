@@ -1,0 +1,119 @@
+import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { NextRequest, NextResponse } from "next/server";
+import { callClaude } from "@/lib/llm/anthropic";
+import { checkCredits, deductCredits } from "@/lib/credits/manager";
+
+/**
+ * POST /api/threads/chat — Follow-up question on a thread analysis.
+ * Ref: PRODUCT-SPEC.md §5.3 (Chat functionality)
+ *
+ * Body: { thread_analysis_id: string, message: string }
+ */
+export async function POST(request: NextRequest) {
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // Credit check
+  const creditCheck = await checkCredits(user.id, "thread_chat");
+  if (!creditCheck.hasEnough) {
+    return NextResponse.json({
+      error: "Insufficient credits",
+      balance: creditCheck.balance,
+      required: creditCheck.estimatedMin,
+    }, { status: 402 });
+  }
+
+  const { thread_analysis_id, message } = await request.json();
+  if (!thread_analysis_id || !message) {
+    return NextResponse.json({ error: "thread_analysis_id and message required" }, { status: 400 });
+  }
+
+  // Get the thread analysis
+  const { data: analysis } = await supabase
+    .from("thread_analyses")
+    .select("*")
+    .eq("id", thread_analysis_id)
+    .single();
+
+  if (!analysis) return NextResponse.json({ error: "Analysis not found" }, { status: 404 });
+
+  // Get business context
+  const { data: business } = await supabase
+    .from("businesses")
+    .select("description, icp_description, keywords")
+    .eq("id", analysis.business_id)
+    .single();
+
+  // Get previous chat messages for context
+  const { data: prevMessages } = await supabase
+    .from("thread_chat_messages")
+    .select("role, content")
+    .eq("thread_analysis_id", thread_analysis_id)
+    .order("created_at", { ascending: true });
+
+  // Save user message
+  await supabase.from("thread_chat_messages").insert({
+    thread_analysis_id,
+    role: "user",
+    content: message,
+  });
+
+  // Build chat context
+  const contextMessages = (prevMessages || []).map((m) => ({
+    role: m.role as "user" | "assistant",
+    content: m.content,
+  }));
+
+  const systemPrompt = `You are a business intelligence assistant helping analyze a Reddit thread.
+
+THREAD CONTEXT:
+- Title: ${analysis.thread_title}
+- URL: ${analysis.reddit_url}
+- Summary: ${analysis.summary}
+- Pain points: ${JSON.stringify(analysis.pain_points)}
+- Key insights: ${JSON.stringify(analysis.key_insights)}
+- Buying signals: ${JSON.stringify(analysis.buying_signals)}
+- Competitive landscape: ${JSON.stringify(analysis.competitive_landscape)}
+- Sentiment: ${analysis.sentiment}
+- Comments analyzed: ${analysis.comment_count}
+
+BUSINESS CONTEXT:
+- Description: ${business?.description || "N/A"}
+- ICP: ${business?.icp_description || "N/A"}
+- Keywords: ${JSON.stringify(business?.keywords || {})}
+
+Answer the user's follow-up questions about this thread. Be specific, reference users and comments from the thread where relevant. Keep answers concise and actionable.`;
+
+  try {
+    const chatPrompt = contextMessages
+      .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
+      .join("\n\n");
+
+    const fullPrompt = chatPrompt ? `${chatPrompt}\n\nUser: ${message}` : message;
+
+    const result = await callClaude({
+      model: "claude-sonnet-4-20250514",
+      maxTokens: 1000,
+      systemPrompt,
+      userMessage: fullPrompt,
+    });
+
+    const totalTokens = result.inputTokens + result.outputTokens;
+
+    // Save assistant response
+    await supabase.from("thread_chat_messages").insert({
+      thread_analysis_id,
+      role: "assistant",
+      content: result.text,
+    });
+
+    // Deduct credits
+    await deductCredits(user.id, "thread_chat", totalTokens, "claude-sonnet-4-20250514", thread_analysis_id);
+
+    return NextResponse.json({ response: result.text });
+  } catch (err) {
+    console.error("Chat failed:", err);
+    return NextResponse.json({ error: "Failed to generate response" }, { status: 500 });
+  }
+}

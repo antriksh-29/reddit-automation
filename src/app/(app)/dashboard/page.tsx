@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
 
 /**
  * Dashboard — alert feed with filters, sort, new/seen split.
@@ -49,6 +50,7 @@ function timeAgo(dateStr: string): string {
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
   const [subreddits, setSubreddits] = useState<string[]>([]);
@@ -228,10 +230,16 @@ export default function DashboardPage() {
 
         {/* Actions */}
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-          <button style={{ padding: "6px 12px", fontSize: "12px", fontWeight: 500, borderRadius: "6px", border: "1px solid #2A2A2A", backgroundColor: "transparent", color: "#A3A3A0", cursor: "pointer", fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <button
+            onClick={() => router.push(`/threads?url=${encodeURIComponent(alert.post_url)}`)}
+            style={{ padding: "6px 12px", fontSize: "12px", fontWeight: 500, borderRadius: "6px", border: "1px solid #2A2A2A", backgroundColor: "transparent", color: "#A3A3A0", cursor: "pointer", fontFamily: "'DM Sans', system-ui, sans-serif" }}
+          >
             Analyze Thread
           </button>
-          <button style={{ padding: "6px 12px", fontSize: "12px", fontWeight: 500, borderRadius: "6px", border: "1px solid #2A2A2A", backgroundColor: "transparent", color: "#A3A3A0", cursor: "pointer", fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <button
+            onClick={() => router.push(`/threads?url=${encodeURIComponent(alert.post_url)}&draft=true`)}
+            style={{ padding: "6px 12px", fontSize: "12px", fontWeight: 500, borderRadius: "6px", border: "1px solid #2A2A2A", backgroundColor: "transparent", color: "#A3A3A0", cursor: "pointer", fontFamily: "'DM Sans', system-ui, sans-serif" }}
+          >
             Draft Response
           </button>
           <a
