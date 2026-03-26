@@ -4,17 +4,20 @@
  *
  * STARTUP SEQUENCE:
  *   1. Load sentence-transformer model (MiniLM-L6-v2)
- *   2. Start HTTP server (health + scan-now webhook)
- *   3. Run initial scan immediately
- *   4. Start 15-min scan interval
+ *   2. Backfill embeddings for any businesses missing them
+ *   3. Start HTTP server (health + scan-now + generate-embeddings webhooks)
+ *   4. Run initial scan immediately
+ *   5. Start 15-min scan interval
  *
  * ENDPOINTS:
- *   GET  /health   → { status, model_loaded, last_scan, uptime }
- *   POST /scan-now → trigger immediate scan (shared secret auth)
+ *   GET  /health              → { status, model_loaded, last_scan, uptime }
+ *   POST /scan-now            → trigger immediate scan (shared secret auth)
+ *   POST /generate-embeddings → generate embeddings for a business (from onboarding)
  */
 
 import express from "express";
 import { loadModel, isModelLoaded } from "./embeddings.js";
+import { backfillEmbeddings, generateAndStoreEmbedding } from "./generate-embeddings.js";
 import {
   runScanCycle,
   isScanInProgress,
@@ -40,7 +43,17 @@ async function main() {
     process.exit(1);
   }
 
-  // 2. Start HTTP server
+  // 2. Backfill embeddings for businesses that don't have them
+  try {
+    const backfilled = await backfillEmbeddings();
+    if (backfilled > 0) {
+      console.log(`[worker] Backfilled embeddings for ${backfilled} businesses`);
+    }
+  } catch (error) {
+    console.error("[worker] Embedding backfill failed (non-fatal):", error);
+  }
+
+  // 3. Start HTTP server
   const app = express();
   app.use(express.json());
 
@@ -79,7 +92,6 @@ async function main() {
       return;
     }
 
-    // Trigger scan async — don't wait for it
     runScanCycle().catch((err) =>
       console.error("[worker] Scan-now cycle failed:", err)
     );
@@ -87,20 +99,42 @@ async function main() {
     res.json({ status: "triggered" });
   });
 
+  // Generate embeddings webhook (triggered from onboarding complete)
+  app.post("/generate-embeddings", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (authHeader !== `Bearer ${WEBHOOK_SECRET}`) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    const { business_id } = req.body;
+    if (!business_id) {
+      res.status(400).json({ error: "business_id required" });
+      return;
+    }
+
+    try {
+      await generateAndStoreEmbedding(business_id);
+      res.json({ status: "generated" });
+    } catch (err) {
+      console.error("[worker] Embedding generation failed:", err);
+      res.status(500).json({ error: "Failed to generate embeddings" });
+    }
+  });
+
   app.listen(PORT, () => {
     console.log(`[worker] Health server listening on port ${PORT}`);
   });
 
-  // 3. Run initial scan immediately
+  // 4. Run initial scan immediately
   console.log("[worker] Running initial scan...");
   try {
     await runScanCycle();
   } catch (error) {
     console.error("[worker] Initial scan failed:", error);
-    // Don't exit — still run on interval
   }
 
-  // 4. Start scan interval
+  // 5. Start scan interval
   console.log(`[worker] Starting scan interval (every ${SCAN_INTERVAL_MS / 60000} min)`);
   setInterval(async () => {
     try {
