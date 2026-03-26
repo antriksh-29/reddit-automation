@@ -113,6 +113,36 @@ export async function POST(request: Request) {
       source: "backend",
     });
 
+    // 7. Trigger worker: generate embeddings + first-time scan
+    //    Non-blocking — don't wait for these to complete.
+    //    User gets redirected to dashboard immediately.
+    const workerUrl = process.env.WORKER_URL;
+    const workerSecret = process.env.WORKER_WEBHOOK_SECRET;
+
+    if (workerUrl && workerSecret) {
+      // Generate embeddings for the new business
+      fetch(`${workerUrl}/generate-embeddings`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${workerSecret}`,
+        },
+        body: JSON.stringify({ business_id: business.id }),
+      }).catch((err) =>
+        console.error("Worker embedding webhook failed (non-blocking):", err)
+      );
+
+      // Trigger immediate scan so user sees posts on first dashboard load
+      fetch(`${workerUrl}/scan-now`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${workerSecret}`,
+        },
+      }).catch((err) =>
+        console.error("Worker scan-now webhook failed (non-blocking):", err)
+      );
+    }
+
     return NextResponse.json({
       business_id: business.id,
       trial_ends_at: trialEnd.toISOString(),

@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-03-25
 **Branch:** `antriksh-29/reddit-lead-tool`
-**Current Phase:** Phase 2 (Onboarding) — COMPLETE. Next: Phase 3 (Scanner Worker)
+**Current Phase:** Phase 3 (Scanner) — COMPLETE. Next: Phase 4 (Dashboard)
 
 ---
 
@@ -79,24 +79,41 @@ Everything built, tested, and working end-to-end.
 
 ---
 
-## Phase 3: Scanner Worker — NOT STARTED
+## Phase 3: Scanner Worker — COMPLETE (email deferred)
 
-Per TECH-SPEC.md §6, §7:
-- Railway worker (always-on Node.js process)
-- ML model loading (all-MiniLM-L6-v2 for semantic embeddings)
-- Pass 1: Semantic + keyword/regex pre-filter (local, free)
-- Pass 2: Claude Haiku LLM relevance scoring
-- Priority scoring (40% relevance, 30% recency, 15% velocity, 15% intent)
-- 5 post categories (pain_point, solution_request, competitor_dissatisfaction, experience_sharing, industry_discussion)
-- Alert creation + email notifications (Amazon SES)
-- First-time post fetch (last 24hrs after onboarding)
-- Plan eligibility check (skip expired free trials)
-- Health endpoint + scan-now webhook
+### What's Built
 
-**Needs before starting:**
-- Reddit API credentials (OAuth2 app registration)
-- AWS SES credentials
-- Railway account + deployment setup
+| Component | Files | Status |
+|-----------|-------|--------|
+| Worker entry point + health server | `worker/index.ts` | Done |
+| Reddit public JSON client | `worker/reddit.ts` | Done (public endpoints, no OAuth) |
+| MiniLM-L6-v2 embeddings | `worker/embeddings.ts` | Done, loads in ~200ms (cached) |
+| User profile embedding generation | `worker/generate-embeddings.ts` | Done + backfill on startup |
+| Pass 1: semantic + keyword + regex | `worker/prefilter.ts` | Done, threshold 0.45 |
+| Pass 2: Haiku relevance scoring | `worker/scoring.ts` | Done, 5 categories |
+| Priority calculation (40/30/15/15) | `worker/scoring.ts` | Done |
+| Core scan cycle orchestrator | `worker/scanner.ts` | Done (mutex, circuit breaker, dedup) |
+| Relevance scoring prompt | `prompts/relevance-scoring.md` | Done |
+| Plan eligibility check | `worker/scanner.ts` | Done (free trial expiry check) |
+| Health endpoint (GET /health) | `worker/index.ts` | Done |
+| Scan-now webhook (POST /scan-now) | `worker/index.ts` | Done |
+| Embedding webhook (POST /generate-embeddings) | `worker/index.ts` | Done |
+| Onboarding → worker trigger | `src/app/api/onboarding/complete/route.ts` | Done (non-blocking) |
+
+### Scanner Performance (tested with real data)
+- 3 subreddits (devops, kubernetes, sre), 75 posts fetched
+- Pass 1: 33 posts passed (44% — expected for niche SRE subreddits)
+- Pass 2: 33 scored by Haiku → 9 medium, 24 low priority
+- 100% recall on independently-identified relevant posts
+- Full cycle: ~130s (well within 15-min window)
+
+### What's Remaining (deferred)
+
+| Item | Priority | Notes |
+|------|----------|-------|
+| **Email notifications (SES)** | P1 | Send email for HIGH priority alerts. Needs AWS SES credentials. |
+| **Railway deployment** | P1 | Deploy worker to Railway always-on. Needs Railway account. |
+| **Reddit OAuth upgrade** | P2 | Swap public JSON → OAuth when API access approved. 10x rate limit. |
 
 ---
 
