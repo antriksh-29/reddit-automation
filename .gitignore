@@ -32,3 +32,4 @@ playwright-report/
 .gstack/
 .context/
 .claude/skills/gstack.bak/
+supabase/.temp/

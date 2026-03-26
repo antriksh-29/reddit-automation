@@ -110,14 +110,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 display: "flex",
                 alignItems: "center",
                 gap: "6px",
-                backgroundColor: "#1C1C1C",
+                backgroundColor: credits !== null && credits <= 5 ? "#EF4444" : "#E8651A",
                 borderRadius: "9999px",
-                padding: "4px 12px",
+                padding: "5px 14px",
                 fontSize: "13px",
               }}
             >
-              <span style={{ color: "#6B6B68" }}>Credits:</span>
-              <span style={{ fontWeight: 600, color: credits !== null && credits <= 5 ? "#EF4444" : "#E8651A" }}>
+              <span style={{ color: "rgba(255,255,255,0.8)", fontWeight: 500 }}>Credits:</span>
+              <span style={{ fontWeight: 700, color: "#FFFFFF" }}>
                 {credits !== null ? credits.toFixed(1) : "—"}
               </span>
             </div>

@@ -356,7 +356,7 @@ export default function OnboardingPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      router.push("/dashboard");
+      router.push("/onboarding/setup");
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Failed to complete onboarding");
     } finally {

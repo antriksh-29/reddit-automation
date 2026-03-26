@@ -18,6 +18,7 @@
 import express from "express";
 import { loadModel, isModelLoaded } from "./embeddings.js";
 import { backfillEmbeddings, generateAndStoreEmbedding } from "./generate-embeddings.js";
+import { runFirstScan } from "./first-scan.js";
 import {
   runScanCycle,
   isScanInProgress,
@@ -120,6 +121,33 @@ async function main() {
       console.error("[worker] Embedding generation failed:", err);
       res.status(500).json({ error: "Failed to generate embeddings" });
     }
+  });
+
+  // First scan SSE endpoint (called from onboarding setup page)
+  app.post("/first-scan", (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (authHeader !== `Bearer ${WEBHOOK_SECRET}`) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    const { user_id } = req.body;
+    if (!user_id) {
+      res.status(400).json({ error: "user_id required" });
+      return;
+    }
+
+    // Set SSE headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    runFirstScan(user_id, res).catch((err) => {
+      console.error("[worker] First scan failed:", err);
+      res.write(`event: error\ndata: ${JSON.stringify({ message: "Scan failed" })}\n\n`);
+      res.end();
+    });
   });
 
   app.listen(PORT, () => {
