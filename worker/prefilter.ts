@@ -26,7 +26,7 @@
 import { embed, cosineSimilarity } from "./embeddings.js";
 import type { RedditPost } from "./reddit.js";
 
-const PASS1_THRESHOLD = 0.35;
+const PASS1_THRESHOLD = 0.45;
 
 // Intent signal regex patterns — phrases indicating buying/seeking/pain behavior
 const INTENT_PATTERNS = [
