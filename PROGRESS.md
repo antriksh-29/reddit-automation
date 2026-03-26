@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-03-25
 **Branch:** `antriksh-29/reddit-lead-tool`
-**Current Phase:** Phase 2 (Onboarding) — 85% complete
+**Current Phase:** Phase 2 (Onboarding) — COMPLETE. Next: Phase 3 (Scanner Worker)
 
 ---
 
@@ -37,7 +37,7 @@ Everything built, tested, and working end-to-end.
 
 ---
 
-## Phase 2: Onboarding — 85% COMPLETE
+## Phase 2: Onboarding — COMPLETE
 
 ### What's Built
 
@@ -52,6 +52,9 @@ Everything built, tested, and working end-to-end.
 | LLM client (Anthropic wrapper) | `src/lib/llm/anthropic.ts` | Done |
 | LLM prompt templates | `prompts/onboarding-agent1.md`, `prompts/onboarding-agent2.md` | Done |
 | HTML-to-text extraction (Cheerio) | `src/app/api/onboarding/analyze-url/route.ts` | Done |
+| Trial activation (3-day) | `src/app/api/onboarding/complete/route.ts` | Done |
+| Credit grant (25 credits) | `src/app/api/onboarding/complete/route.ts` + `src/lib/credits/manager.ts` | Done |
+| Credit badge (live balance) | `src/components/layout/app-shell.tsx` + `src/app/api/credits/route.ts` | Done |
 
 ### Onboarding UX Details (all implemented)
 - Auto-resizing textareas for description and ICP
@@ -71,14 +74,8 @@ Everything built, tested, and working end-to-end.
 - No "Rediscover" button
 - No subreddit type labels (niche/mid/large) shown to user
 - Subreddits show only name + reason + delete button (no checkmarks)
-
-### What's Remaining (Phase 2)
-
-| Item | Priority | Notes |
-|------|----------|-------|
-| **Trial activation** | P0 | On onboarding complete: set `trial_started_at = NOW()`, `trial_ends_at = NOW() + 3 days` on users table |
-| **Credit grant** | P0 | On onboarding complete: create `credit_balances` row with 25 credits, log `credit_transactions` with action_type `trial_grant` |
-| **Credit badge live balance** | P0 | Wire up app-shell credit badge to read from `credit_balances` table (currently shows "--") |
+- Credit badge shows live balance (red when ≤5 credits), refreshes on navigation
+- Trial timestamps set on completion (3 days from onboarding)
 
 ---
 

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { useEffect, useState } from "react";
 
 const NAV_ITEMS = [
   { label: "Dashboard", href: "/dashboard" },
@@ -13,6 +14,23 @@ const NAV_ITEMS = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const [credits, setCredits] = useState<number | null>(null);
+
+  useEffect(() => {
+    fetchCredits();
+  }, [pathname]); // Re-fetch on navigation (credits may change after actions)
+
+  async function fetchCredits() {
+    try {
+      const res = await fetch("/api/credits");
+      if (res.ok) {
+        const data = await res.json();
+        setCredits(data.balance);
+      }
+    } catch {
+      // Non-blocking — badge just stays at previous value
+    }
+  }
 
   async function handleSignOut() {
     const supabase = createClient();
@@ -86,7 +104,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
           {/* Right: Credits + Sign Out */}
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-            {/* Credit badge */}
+            {/* Credit badge — live balance */}
             <div
               style={{
                 display: "flex",
@@ -99,7 +117,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               }}
             >
               <span style={{ color: "#6B6B68" }}>Credits:</span>
-              <span style={{ fontWeight: 600, color: "#E8651A" }}>--</span>
+              <span style={{ fontWeight: 600, color: credits !== null && credits <= 5 ? "#EF4444" : "#E8651A" }}>
+                {credits !== null ? credits.toFixed(1) : "—"}
+              </span>
             </div>
 
             {/* Sign Out */}
