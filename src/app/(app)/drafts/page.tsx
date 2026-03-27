@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 
 /**
@@ -16,7 +16,14 @@ interface CommentDraft {
   approval_state: string;
 }
 
-const spinCSS = `@keyframes spin { to { transform: rotate(360deg); } }`;
+const spinCSS = `
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes shimmer-border {
+  0% { border-color: rgba(232, 101, 26, 0.3); }
+  50% { border-color: rgba(232, 101, 26, 0.8); }
+  100% { border-color: rgba(232, 101, 26, 0.3); }
+}
+`;
 
 function refreshCredits() {
   window.dispatchEvent(new CustomEvent("credits-updated"));
@@ -31,6 +38,7 @@ export default function DraftsPage() {
   const [error, setError] = useState<string | null>(null);
   const [subredditRules, setSubredditRules] = useState<string>("");
   const [postTitle, setPostTitle] = useState<string>("");
+  const [postUrl, setPostUrl] = useState<string>("");
   const [subredditName, setSubredditName] = useState<string>("");
 
   // Edit state
@@ -53,6 +61,17 @@ export default function DraftsPage() {
   } | null>(null);
   const [improvedCopied, setImprovedCopied] = useState(false);
 
+  // Auto-resize refs
+  const editRef = useRef<HTMLTextAreaElement>(null);
+  const userDraftRef = useRef<HTMLTextAreaElement>(null);
+
+  const autoResize = useCallback((ref: React.RefObject<HTMLTextAreaElement | null>) => {
+    if (ref.current) {
+      ref.current.style.height = "auto";
+      ref.current.style.height = ref.current.scrollHeight + "px";
+    }
+  }, []);
+
   // Credit confirmation
   const [showConfirm, setShowConfirm] = useState(false);
   const [creditBalance, setCreditBalance] = useState<number | null>(null);
@@ -72,6 +91,7 @@ export default function DraftsPage() {
         const alert = data.alerts?.[0] || data.alert;
         if (alert) {
           setPostTitle(alert.post_title || "");
+          setPostUrl(alert.post_url || "");
           setSubredditName(alert.subreddit_name || "");
         }
       }
@@ -193,6 +213,8 @@ export default function DraftsPage() {
   function startEditing(draft: CommentDraft) {
     setEditingId(draft.id);
     setEditText(draft.draft_text);
+    // Trigger auto-resize after state update
+    setTimeout(() => autoResize(editRef), 0);
   }
 
   function saveEdit(draftId: string) {
@@ -231,6 +253,11 @@ export default function DraftsPage() {
             {subredditName && " · "}
             {postTitle}
           </p>
+        )}
+        {postUrl && (
+          <a href={postUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: "12px", color: "#E8651A", textDecoration: "none", marginTop: "4px", display: "inline-block" }}>
+            View original thread on Reddit ↗
+          </a>
         )}
       </div>
 
@@ -326,13 +353,22 @@ export default function DraftsPage() {
           <button
             onClick={() => setShowReviewPanel(true)}
             style={{
-              width: "100%", padding: "12px", fontSize: "14px", fontWeight: 500,
-              borderRadius: "8px", border: "1px dashed #3A3A3A", backgroundColor: "transparent",
-              color: "#A3A3A0", cursor: "pointer", fontFamily: "'DM Sans', system-ui, sans-serif",
-              transition: "all 150ms",
+              width: "100%", padding: "14px", fontSize: "14px", fontWeight: 600,
+              borderRadius: "8px", border: "1px solid rgba(232, 101, 26, 0.4)",
+              backgroundColor: "rgba(232, 101, 26, 0.06)",
+              color: "#E8651A", cursor: "pointer", fontFamily: "'DM Sans', system-ui, sans-serif",
+              animation: "shimmer-border 2s ease-in-out infinite",
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#E8651A"; e.currentTarget.style.color = "#E8651A"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#3A3A3A"; e.currentTarget.style.color = "#A3A3A0"; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = "rgba(232, 101, 26, 0.12)";
+              e.currentTarget.style.borderColor = "#E8651A";
+              e.currentTarget.style.animation = "none";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = "rgba(232, 101, 26, 0.06)";
+              e.currentTarget.style.borderColor = "rgba(232, 101, 26, 0.4)";
+              e.currentTarget.style.animation = "shimmer-border 2s ease-in-out infinite";
+            }}
           >
             Have your own draft? Get it reviewed by AI →
           </button>
@@ -363,13 +399,15 @@ export default function DraftsPage() {
 
           {/* User draft input */}
           <textarea
+            ref={userDraftRef}
             value={userDraftText}
-            onChange={(e) => setUserDraftText(e.target.value)}
+            onChange={(e) => { setUserDraftText(e.target.value); setTimeout(() => autoResize(userDraftRef), 0); }}
             placeholder="Paste your draft comment here..."
             style={{
-              width: "100%", minHeight: "120px", backgroundColor: "#0A0A0A",
+              width: "100%", minHeight: "80px", backgroundColor: "#0A0A0A",
               border: "1px solid #2A2A2A", borderRadius: "8px", padding: "14px",
-              fontSize: "14px", color: "#F5F5F3", outline: "none", resize: "vertical",
+              fontSize: "14px", color: "#F5F5F3", outline: "none", resize: "none",
+              overflow: "hidden",
               fontFamily: "'DM Sans', system-ui, sans-serif", lineHeight: 1.7,
               boxSizing: "border-box", marginBottom: "12px",
             }}
@@ -519,12 +557,14 @@ export default function DraftsPage() {
           {editingId === draft.id ? (
             <>
               <textarea
+                ref={editRef}
                 value={editText}
-                onChange={(e) => setEditText(e.target.value)}
+                onChange={(e) => { setEditText(e.target.value); setTimeout(() => autoResize(editRef), 0); }}
                 style={{
-                  width: "100%", minHeight: "140px", backgroundColor: "#0A0A0A",
+                  width: "100%", minHeight: "80px", backgroundColor: "#0A0A0A",
                   border: "1px solid #E8651A", borderRadius: "8px", padding: "14px",
-                  fontSize: "14px", color: "#F5F5F3", outline: "none", resize: "vertical",
+                  fontSize: "14px", color: "#F5F5F3", outline: "none", resize: "none",
+                  overflow: "hidden",
                   fontFamily: "'DM Sans', system-ui, sans-serif", lineHeight: 1.7,
                   boxSizing: "border-box",
                 }}
