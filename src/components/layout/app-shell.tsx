@@ -126,9 +126,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 gap: "6px",
                 background: credits !== null && credits <= 5
                   ? "#EF4444"
-                  : "linear-gradient(90deg, #E8651A 0%, #F5943A 25%, #E8651A 50%, #F5943A 75%, #E8651A 100%)",
+                  : "linear-gradient(90deg, #C4550F 0%, #D4742A 25%, #C4550F 50%, #D4742A 75%, #C4550F 100%)",
                 backgroundSize: "200% 100%",
-                animation: credits !== null && credits > 5 ? "credit-shimmer 3s linear infinite" : "none",
+                animation: credits !== null && credits > 5 ? "credit-shimmer 4s linear infinite" : "none",
                 borderRadius: "6px",
                 padding: "6px 14px",
                 fontSize: "13px",
