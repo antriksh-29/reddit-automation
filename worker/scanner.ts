@@ -18,6 +18,7 @@ import pLimit from "p-limit";
 import { fetchNewPosts, type RedditPost } from "./reddit.js";
 import { prefilterPost, type UserProfile } from "./prefilter.js";
 import { scoreRelevance, calculatePriority, type PostCategory } from "./scoring.js";
+import { sendAlertEmail, type AlertEmailData } from "../src/lib/email/ses.js";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -45,6 +46,7 @@ interface ScanMetrics {
 
 interface EligibleUser {
   user_id: string;
+  email: string;
   business_id: string;
   description: string;
   icp_description: string;
@@ -244,6 +246,7 @@ async function getEligibleUsers(subName: string): Promise<EligibleUser[]> {
         embedding_vectors,
         users!inner (
           id,
+          email,
           plan_tier,
           trial_ends_at
         )
@@ -270,7 +273,7 @@ async function getEligibleUsers(subName: string): Promise<EligibleUser[]> {
         icp_description: string;
         keywords: { primary: string[]; discovery: string[] };
         embedding_vectors: number[] | null;
-        users: { id: string; plan_tier: string; trial_ends_at: string | null };
+        users: { id: string; email: string; plan_tier: string; trial_ends_at: string | null };
       };
       const user = business.users;
 
@@ -289,12 +292,13 @@ async function getEligibleUsers(subName: string): Promise<EligibleUser[]> {
         icp_description: string;
         keywords: { primary: string[]; discovery: string[] };
         embedding_vectors: number[] | null;
-        users: { id: string; plan_tier: string; trial_ends_at: string | null };
+        users: { id: string; email: string; plan_tier: string; trial_ends_at: string | null };
       };
 
       // Get competitors for this business
       return {
         user_id: business.users.id,
+        email: business.users.email,
         business_id: business.id,
         description: business.description || "",
         icp_description: business.icp_description || "",
@@ -385,6 +389,57 @@ async function scoreAndAlert(
     `[scanner] Alert: r/${post.subreddit} "${post.title.slice(0, 50)}..." ` +
       `→ ${priority.level} (${priority.score}) [${category}]`
   );
+
+  // Send email for high-priority alerts
+  if (priority.level === "high") {
+    const minutesAgo = Math.floor((Date.now() - post.created_utc * 1000) / 60000);
+    const timeAgo = minutesAgo < 60 ? `${minutesAgo}m ago` : `${Math.floor(minutesAgo / 60)}h ago`;
+
+    const emailData: AlertEmailData = {
+      postTitle: post.title,
+      postUrl: `https://reddit.com${post.permalink}`,
+      subreddit: post.subreddit,
+      category,
+      priorityLevel: priority.level,
+      priorityScore: priority.score,
+      upvotes: post.ups,
+      numComments: post.num_comments,
+      postBody: post.selftext?.slice(0, 300),
+      timeAgo,
+    };
+
+    const emailSent = await sendAlertEmail(user.email, emailData);
+
+    // Update email status on the alert
+    if (emailSent) {
+      await supabase.from("alerts").update({
+        email_status: "sent",
+        email_sent_at: new Date().toISOString(),
+      }).eq("reddit_post_id", post.id).eq("business_id", user.business_id);
+
+      await supabase.from("event_logs").insert({
+        user_id: user.user_id,
+        business_id: user.business_id,
+        event_type: "email.sent",
+        event_data: { alert_post_id: post.id, priority_level: priority.level },
+        source: "cron",
+      });
+
+      console.log(`[scanner] Email sent to ${user.email} for "${post.title.slice(0, 50)}..."`);
+    } else {
+      await supabase.from("alerts").update({
+        email_status: "failed",
+      }).eq("reddit_post_id", post.id).eq("business_id", user.business_id);
+
+      await supabase.from("event_logs").insert({
+        user_id: user.user_id,
+        business_id: user.business_id,
+        event_type: "email.failed",
+        event_data: { alert_post_id: post.id, error: "SES send failed" },
+        source: "cron",
+      });
+    }
+  }
 
   // Log the event
   await supabase.from("event_logs").insert({
