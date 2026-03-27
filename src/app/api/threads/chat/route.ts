@@ -17,10 +17,12 @@ export async function POST(request: NextRequest) {
   // Credit check
   const creditCheck = await checkCredits(user.id, "thread_chat");
   if (!creditCheck.hasEnough) {
+    const { data: planData } = await supabase.from("users").select("plan_tier").eq("id", user.id).single();
     return NextResponse.json({
       error: "Insufficient credits",
       balance: creditCheck.balance,
       required: creditCheck.estimatedMin,
+      plan_tier: planData?.plan_tier || "free",
     }, { status: 402 });
   }
 

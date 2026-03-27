@@ -1041,6 +1041,11 @@ Ref: PRODUCT-SPEC §5.5, §12
 ├── 7.6 Stripe integration (Growth plan checkout + subscription management)
 ├── 7.7 Stripe webhook: handle subscription.created → upgrade plan + grant credits
 └── 7.8 Monthly credit reset (Stripe billing cycle → reset balance to 250.00)
+         NOTE: Credit reset MUST verify latest payment status before resetting.
+         Current implementation checks last_reset_at > 30 days only.
+         Once Stripe is integrated, add: verify subscription.status === "active"
+         AND latest invoice is "paid" before resetting. If payment failed,
+         do NOT reset credits — show "payment failed" state instead.
 
 PHASE 8: Polish + Testing
 ═══════════════════════════════════════════════

@@ -186,7 +186,7 @@ export default function ThreadsPage() {
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 402) {
-          setError("__402__");
+          setError(`__402__${data.plan_tier || "free"}`);
         } else {
           setError(data.error || "Analysis failed");
         }
@@ -266,7 +266,7 @@ export default function ThreadsPage() {
         setMessages((prev) => [...prev, assistantMsg]);
         refreshCredits();
       } else if (res.status === 402) {
-        setError("__402__");
+        setError(`__402__${data.plan_tier || "free"}`);
       }
     } catch {
       setError("Failed to send message");
@@ -524,15 +524,27 @@ export default function ThreadsPage() {
         )}
 
         {/* Error */}
-        {error && error === "__402__" ? (
-          <div style={{ margin: "16px", padding: "24px", backgroundColor: "#141414", border: "1px solid rgba(232, 101, 26, 0.3)", borderRadius: "12px", textAlign: "center" }}>
-            <div style={{ fontSize: "18px", fontWeight: 700, color: "#F5F5F3", marginBottom: "8px" }}>You&apos;ve run out of credits</div>
-            <p style={{ fontSize: "14px", color: "#A3A3A0", marginBottom: "20px" }}>Upgrade to Growth for 250 credits/month — $39/mo</p>
-            <a href="/settings" style={{ display: "inline-block", padding: "10px 24px", fontSize: "14px", fontWeight: 600, borderRadius: "8px", backgroundColor: "#E8651A", color: "#FFF", textDecoration: "none" }}>
-              Upgrade Plan
-            </a>
-          </div>
-        ) : error ? (
+        {error && error.startsWith("__402__") ? (() => {
+          const plan = error.replace("__402__", "");
+          const isFree = plan === "free";
+          return (
+            <div style={{ margin: "16px", padding: "24px", backgroundColor: "#141414", border: "1px solid rgba(232, 101, 26, 0.3)", borderRadius: "12px", textAlign: "center" }}>
+              <div style={{ fontSize: "18px", fontWeight: 700, color: "#F5F5F3", marginBottom: "8px" }}>You&apos;ve run out of credits</div>
+              {isFree ? (
+                <>
+                  <p style={{ fontSize: "14px", color: "#A3A3A0", marginBottom: "20px" }}>Upgrade to Growth for 250 credits/month — $39/mo</p>
+                  <a href="/settings" style={{ display: "inline-block", padding: "10px 24px", fontSize: "14px", fontWeight: 600, borderRadius: "8px", backgroundColor: "#E8651A", color: "#FFF", textDecoration: "none" }}>
+                    Upgrade Plan
+                  </a>
+                </>
+              ) : (
+                <p style={{ fontSize: "14px", color: "#A3A3A0", marginBottom: "8px" }}>
+                  Your monthly credits have been used up. Contact <a href="mailto:antriksh@getarete.co" style={{ color: "#E8651A", textDecoration: "none" }}>antriksh@getarete.co</a> to get additional credits for this month.
+                </p>
+              )}
+            </div>
+          );
+        })() : error ? (
           <div style={{ margin: "16px", padding: "12px 16px", backgroundColor: "rgba(239, 68, 68, 0.08)", border: "1px solid rgba(239, 68, 68, 0.25)", borderRadius: "8px", fontSize: "13px", color: "#EF4444" }}>
             {error}
           </div>

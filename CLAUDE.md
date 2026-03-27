@@ -75,6 +75,10 @@ Worker uses service_role key (bypasses RLS). Never expose service_role to client
 - Scanner checks plan eligibility: skip expired free trials in scan loop
 - Credit deductions are server-side only (atomic DB updates)
 - Credit balance always visible in top nav
+- **Monthly credit reset requires payment verification** — once Stripe is integrated, verify subscription.status === "active" AND latest invoice is "paid" before resetting credits. Current implementation only checks last_reset_at > 30 days.
+- **Credit exhaustion messages are plan-aware:**
+  - Free plan: "Upgrade to Growth for 250 credits/month"
+  - Growth/Custom plan: "Contact antriksh@getarete.co to get additional credits this month"
 
 ## Scanner Worker
 - Scans by **unique subreddit** (Reddit API fetch shared across users)
@@ -90,11 +94,12 @@ Worker uses service_role key (bypasses RLS). Never expose service_role to client
 ## LLM Usage
 | Function | Primary | Fallback |
 |----------|---------|----------|
-| Relevance scoring | Claude Haiku | GPT-4o-mini |
-| Thread analysis | Claude Sonnet | GPT-4o |
-| Thread chat | Claude Sonnet | GPT-4o |
-| Comment drafting | GPT-4o | Claude Sonnet |
-| Onboarding agents | Claude Sonnet | GPT-4o |
+| Relevance scoring | Claude Haiku | GPT-5.4-mini |
+| Thread analysis | Claude Sonnet | GPT-5.4 |
+| Thread chat | Claude Sonnet | GPT-5.4 |
+| Comment drafting | GPT-5.4 | Claude Sonnet |
+| Draft review | Claude Sonnet | GPT-5.4 |
+| Onboarding agents | Claude Sonnet | GPT-5.4 |
 
 Failover: 3 consecutive failures OR >10s timeout → switch for 5 min → retry primary.
 Prompts stored in `prompts/` directory as markdown templates. Load at startup, inject variables at call time.

@@ -27,10 +27,12 @@ export async function POST(request: NextRequest) {
   // Credit check
   const creditCheck = await checkCredits(user.id, "draft_generation");
   if (!creditCheck.hasEnough) {
+    const { data: planData } = await supabase.from("users").select("plan_tier").eq("id", user.id).single();
     return NextResponse.json({
       error: "Insufficient credits",
       balance: creditCheck.balance,
       required: creditCheck.estimatedMin,
+      plan_tier: planData?.plan_tier || "free",
     }, { status: 402 });
   }
 
@@ -255,9 +257,11 @@ export async function PATCH(request: NextRequest) {
 
   const creditCheck = await checkCredits(user.id, "draft_regeneration");
   if (!creditCheck.hasEnough) {
+    const { data: planData } = await supabase.from("users").select("plan_tier").eq("id", user.id).single();
     return NextResponse.json({
       error: "Insufficient credits",
       balance: creditCheck.balance,
+      plan_tier: planData?.plan_tier || "free",
     }, { status: 402 });
   }
 
