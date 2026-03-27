@@ -186,7 +186,7 @@ export default function ThreadsPage() {
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 402) {
-          setError(`Insufficient credits. Balance: ${data.balance}, Required: ${data.required}`);
+          setError("__402__");
         } else {
           setError(data.error || "Analysis failed");
         }
@@ -266,7 +266,7 @@ export default function ThreadsPage() {
         setMessages((prev) => [...prev, assistantMsg]);
         refreshCredits();
       } else if (res.status === 402) {
-        setError(`Insufficient credits. Balance: ${data.balance}`);
+        setError("__402__");
       }
     } catch {
       setError("Failed to send message");
@@ -524,11 +524,19 @@ export default function ThreadsPage() {
         )}
 
         {/* Error */}
-        {error && (
+        {error && error === "__402__" ? (
+          <div style={{ margin: "16px", padding: "24px", backgroundColor: "#141414", border: "1px solid rgba(232, 101, 26, 0.3)", borderRadius: "12px", textAlign: "center" }}>
+            <div style={{ fontSize: "18px", fontWeight: 700, color: "#F5F5F3", marginBottom: "8px" }}>You&apos;ve run out of credits</div>
+            <p style={{ fontSize: "14px", color: "#A3A3A0", marginBottom: "20px" }}>Upgrade to Growth for 250 credits/month — $39/mo</p>
+            <a href="/settings" style={{ display: "inline-block", padding: "10px 24px", fontSize: "14px", fontWeight: 600, borderRadius: "8px", backgroundColor: "#E8651A", color: "#FFF", textDecoration: "none" }}>
+              Upgrade Plan
+            </a>
+          </div>
+        ) : error ? (
           <div style={{ margin: "16px", padding: "12px 16px", backgroundColor: "rgba(239, 68, 68, 0.08)", border: "1px solid rgba(239, 68, 68, 0.25)", borderRadius: "8px", fontSize: "13px", color: "#EF4444" }}>
             {error}
           </div>
-        )}
+        ) : null}
 
         {/* ===== ANALYSIS + CHAT ===== */}
         {!analyzing && activeAnalysis && (
