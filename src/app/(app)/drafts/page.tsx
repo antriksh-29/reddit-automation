@@ -41,6 +41,18 @@ export default function DraftsPage() {
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  // Review my draft state
+  const [showReviewPanel, setShowReviewPanel] = useState(false);
+  const [userDraftText, setUserDraftText] = useState("");
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewResult, setReviewResult] = useState<{
+    overall_score: number;
+    rule_violations: { rule: string; issue: string; severity: string }[];
+    suggestions: { type: string; suggestion: string }[];
+    improved_draft: string;
+  } | null>(null);
+  const [improvedCopied, setImprovedCopied] = useState(false);
+
   // Credit confirmation
   const [showConfirm, setShowConfirm] = useState(false);
   const [creditBalance, setCreditBalance] = useState<number | null>(null);
@@ -137,6 +149,38 @@ export default function DraftsPage() {
       setError("Failed to regenerate draft");
     } finally {
       setRegeneratingId(null);
+    }
+  }
+
+  async function reviewUserDraft() {
+    if (!userDraftText.trim() || !alertId) return;
+    setReviewLoading(true);
+    setReviewResult(null);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/drafts/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ alert_id: alertId, user_draft: userDraftText }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        if (res.status === 402) {
+          setError(`Insufficient credits. Balance: ${data.balance?.toFixed(1)}`);
+        } else {
+          setError(data.error || "Failed to review draft");
+        }
+        return;
+      }
+
+      setReviewResult(data.review);
+      refreshCredits();
+    } catch {
+      setError("Failed to review draft. Please try again.");
+    } finally {
+      setReviewLoading(false);
     }
   }
 
@@ -276,6 +320,190 @@ export default function DraftsPage() {
       )}
 
       {/* Drafts */}
+      {/* ===== REVIEW MY DRAFT — toggle button ===== */}
+      {!loading && !showConfirm && drafts.length > 0 && !showReviewPanel && (
+        <div style={{ marginBottom: "20px" }}>
+          <button
+            onClick={() => setShowReviewPanel(true)}
+            style={{
+              width: "100%", padding: "12px", fontSize: "14px", fontWeight: 500,
+              borderRadius: "8px", border: "1px dashed #3A3A3A", backgroundColor: "transparent",
+              color: "#A3A3A0", cursor: "pointer", fontFamily: "'DM Sans', system-ui, sans-serif",
+              transition: "all 150ms",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#E8651A"; e.currentTarget.style.color = "#E8651A"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#3A3A3A"; e.currentTarget.style.color = "#A3A3A0"; }}
+          >
+            Have your own draft? Get it reviewed by AI →
+          </button>
+        </div>
+      )}
+
+      {/* ===== REVIEW MY DRAFT — panel ===== */}
+      {showReviewPanel && (
+        <div style={{
+          backgroundColor: "#1A1A1A", border: "1px solid #2A2A2A",
+          borderRadius: "12px", padding: "20px", marginBottom: "20px",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
+            <h3 style={{ fontSize: "16px", fontWeight: 600, color: "#F5F5F3", fontFamily: "'Satoshi', system-ui, sans-serif" }}>
+              Review My Draft
+            </h3>
+            <button
+              onClick={() => { setShowReviewPanel(false); setReviewResult(null); setUserDraftText(""); }}
+              style={{ background: "none", border: "none", color: "#6B6B68", cursor: "pointer", fontSize: "18px" }}
+            >
+              ✕
+            </button>
+          </div>
+
+          <p style={{ fontSize: "13px", color: "#A3A3A0", marginBottom: "14px", lineHeight: 1.5 }}>
+            Paste your comment draft below. Our AI will check it against subreddit rules, suggest improvements, and provide an enhanced version.
+          </p>
+
+          {/* User draft input */}
+          <textarea
+            value={userDraftText}
+            onChange={(e) => setUserDraftText(e.target.value)}
+            placeholder="Paste your draft comment here..."
+            style={{
+              width: "100%", minHeight: "120px", backgroundColor: "#0A0A0A",
+              border: "1px solid #2A2A2A", borderRadius: "8px", padding: "14px",
+              fontSize: "14px", color: "#F5F5F3", outline: "none", resize: "vertical",
+              fontFamily: "'DM Sans', system-ui, sans-serif", lineHeight: 1.7,
+              boxSizing: "border-box", marginBottom: "12px",
+            }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = "#E8651A"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "#2A2A2A"; }}
+          />
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: reviewResult ? "20px" : "0" }}>
+            <span style={{ fontSize: "11px", color: "#555" }}>~2-4 credits</span>
+            <button
+              onClick={reviewUserDraft}
+              disabled={!userDraftText.trim() || reviewLoading}
+              style={{
+                padding: "10px 24px", fontSize: "14px", fontWeight: 600, borderRadius: "8px",
+                border: "none", backgroundColor: "#E8651A", color: "#FFF", cursor: "pointer",
+                fontFamily: "'DM Sans', system-ui, sans-serif",
+                opacity: !userDraftText.trim() || reviewLoading ? 0.5 : 1,
+                display: "flex", alignItems: "center", gap: "8px",
+              }}
+            >
+              {reviewLoading && (
+                <span style={{ width: "14px", height: "14px", border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
+              )}
+              {reviewLoading ? "Reviewing" : "Review Draft"}
+            </button>
+          </div>
+
+          {/* Review Results */}
+          {reviewResult && (
+            <div style={{ borderTop: "1px solid #2A2A2A", paddingTop: "20px" }}>
+
+              {/* Score */}
+              <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
+                <div style={{
+                  width: "48px", height: "48px", borderRadius: "50%", display: "flex",
+                  alignItems: "center", justifyContent: "center", fontSize: "18px", fontWeight: 700,
+                  backgroundColor: reviewResult.overall_score >= 8 ? "rgba(34, 197, 94, 0.12)" : reviewResult.overall_score >= 5 ? "rgba(245, 158, 11, 0.12)" : "rgba(239, 68, 68, 0.12)",
+                  color: reviewResult.overall_score >= 8 ? "#22C55E" : reviewResult.overall_score >= 5 ? "#F59E0B" : "#EF4444",
+                  border: `2px solid ${reviewResult.overall_score >= 8 ? "#22C55E" : reviewResult.overall_score >= 5 ? "#F59E0B" : "#EF4444"}`,
+                }}>
+                  {reviewResult.overall_score}/10
+                </div>
+                <div>
+                  <div style={{ fontSize: "14px", fontWeight: 600, color: "#F5F5F3" }}>
+                    {reviewResult.overall_score >= 8 ? "Ready to post" : reviewResult.overall_score >= 5 ? "Needs some work" : "Needs significant changes"}
+                  </div>
+                  <div style={{ fontSize: "12px", color: "#A3A3A0" }}>Readiness score</div>
+                </div>
+              </div>
+
+              {/* Rule Violations */}
+              {reviewResult.rule_violations.length > 0 && (
+                <div style={{ backgroundColor: "rgba(239, 68, 68, 0.06)", border: "1px solid rgba(239, 68, 68, 0.2)", borderRadius: "8px", padding: "14px", marginBottom: "14px" }}>
+                  <div style={{ fontSize: "12px", fontWeight: 600, color: "#EF4444", marginBottom: "10px", textTransform: "uppercase" }}>Rule Violations</div>
+                  {reviewResult.rule_violations.map((v, i) => (
+                    <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "8px", fontSize: "13px", lineHeight: 1.5 }}>
+                      <span style={{ color: "#EF4444", flexShrink: 0 }}>•</span>
+                      <div>
+                        <span style={{ fontWeight: 500, color: "#F5F5F3" }}>{v.rule}</span>
+                        <span style={{
+                          fontSize: "10px", padding: "1px 5px", borderRadius: "3px", marginLeft: "6px",
+                          backgroundColor: v.severity === "high" ? "rgba(239,68,68,0.12)" : v.severity === "medium" ? "rgba(245,158,11,0.12)" : "rgba(107,107,104,0.12)",
+                          color: v.severity === "high" ? "#EF4444" : v.severity === "medium" ? "#F59E0B" : "#A3A3A0",
+                        }}>
+                          {v.severity}
+                        </span>
+                        <p style={{ color: "#C0C0BD", marginTop: "2px" }}>{v.issue}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Suggestions */}
+              {reviewResult.suggestions.length > 0 && (
+                <div style={{ backgroundColor: "rgba(96, 165, 250, 0.06)", border: "1px solid rgba(96, 165, 250, 0.2)", borderRadius: "8px", padding: "14px", marginBottom: "14px" }}>
+                  <div style={{ fontSize: "12px", fontWeight: 600, color: "#60A5FA", marginBottom: "10px", textTransform: "uppercase" }}>Suggestions</div>
+                  {reviewResult.suggestions.map((s, i) => (
+                    <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "8px", fontSize: "13px", lineHeight: 1.5 }}>
+                      <span style={{ color: "#60A5FA", flexShrink: 0 }}>•</span>
+                      <div>
+                        <span style={{
+                          fontSize: "10px", padding: "1px 5px", borderRadius: "3px",
+                          backgroundColor: "rgba(96,165,250,0.12)", color: "#60A5FA", marginRight: "6px",
+                        }}>
+                          {s.type}
+                        </span>
+                        <span style={{ color: "#F5F5F3" }}>{s.suggestion}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Improved Draft */}
+              {reviewResult.improved_draft && (
+                <div style={{ backgroundColor: "#141414", border: "1px solid #2A2A2A", borderRadius: "8px", padding: "16px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
+                    <div style={{ fontSize: "12px", fontWeight: 600, color: "#22C55E", textTransform: "uppercase" }}>Improved Version</div>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(reviewResult.improved_draft);
+                        setImprovedCopied(true);
+                        setTimeout(() => setImprovedCopied(false), 2000);
+                      }}
+                      style={{
+                        padding: "4px 12px", fontSize: "11px", borderRadius: "4px",
+                        border: "1px solid #2A2A2A",
+                        backgroundColor: improvedCopied ? "rgba(34, 197, 94, 0.12)" : "transparent",
+                        color: improvedCopied ? "#22C55E" : "#A3A3A0",
+                        cursor: "pointer", fontFamily: "'DM Sans', system-ui, sans-serif",
+                      }}
+                    >
+                      {improvedCopied ? "Copied!" : "Copy"}
+                    </button>
+                  </div>
+                  <p style={{ fontSize: "14px", color: "#F5F5F3", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+                    {reviewResult.improved_draft}
+                  </p>
+                </div>
+              )}
+
+              {/* No violations */}
+              {reviewResult.rule_violations.length === 0 && (
+                <div style={{ backgroundColor: "rgba(34, 197, 94, 0.06)", border: "1px solid rgba(34, 197, 94, 0.2)", borderRadius: "8px", padding: "12px 14px", fontSize: "13px", color: "#22C55E", marginBottom: "14px" }}>
+                  No rule violations detected. Your draft looks compliant with the subreddit rules.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ===== AI-GENERATED DRAFTS ===== */}
       {!loading && !showConfirm && drafts.map((draft) => (
         <div
           key={draft.id}
