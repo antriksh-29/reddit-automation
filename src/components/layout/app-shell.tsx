@@ -18,7 +18,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     fetchCredits();
-  }, [pathname]); // Re-fetch on navigation (credits may change after actions)
+  }, [pathname]); // Re-fetch on navigation
+
+  // Listen for credit-deduction events from thread analysis / chat
+  useEffect(() => {
+    function handleCreditUpdate() { fetchCredits(); }
+    window.addEventListener("credits-updated", handleCreditUpdate);
+    return () => window.removeEventListener("credits-updated", handleCreditUpdate);
+  }, []);
 
   async function fetchCredits() {
     try {
@@ -38,8 +45,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     router.push("/login");
   }
 
+  const shimmerCSS = `
+@keyframes credit-shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}`;
+
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", backgroundColor: "#0A0A0A" }}>
+      <style dangerouslySetInnerHTML={{ __html: shimmerCSS }} />
       {/* Top Navigation */}
       <header
         style={{
@@ -47,7 +61,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           top: 0,
           zIndex: 50,
           borderBottom: "1px solid #2A2A2A",
-          backgroundColor: "rgba(20, 20, 20, 0.85)",
+          backgroundColor: "rgba(26, 26, 26, 0.9)",
           backdropFilter: "blur(12px)",
         }}
       >
@@ -104,19 +118,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
           {/* Right: Credits + Sign Out */}
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-            {/* Credit badge — live balance */}
+            {/* Credit badge — live balance with shimmer */}
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: "6px",
-                backgroundColor: credits !== null && credits <= 5 ? "#EF4444" : "#E8651A",
-                borderRadius: "9999px",
-                padding: "5px 14px",
+                background: credits !== null && credits <= 5
+                  ? "#EF4444"
+                  : "linear-gradient(90deg, #E8651A 0%, #F5943A 25%, #E8651A 50%, #F5943A 75%, #E8651A 100%)",
+                backgroundSize: "200% 100%",
+                animation: credits !== null && credits > 5 ? "credit-shimmer 3s linear infinite" : "none",
+                borderRadius: "6px",
+                padding: "6px 14px",
                 fontSize: "13px",
               }}
             >
-              <span style={{ color: "rgba(255,255,255,0.8)", fontWeight: 500 }}>Credits:</span>
+              <span style={{ color: "rgba(255,255,255,0.85)", fontWeight: 500 }}>Credits:</span>
               <span style={{ fontWeight: 700, color: "#FFFFFF" }}>
                 {credits !== null ? credits.toFixed(1) : "—"}
               </span>
