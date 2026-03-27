@@ -300,7 +300,7 @@ export default function DashboardPage() {
         {/* Actions */}
         <div style={{ display: "flex", gap: "8px", marginTop: "14px" }}>
           <button
-            onClick={() => router.push(`/threads?url=${encodeURIComponent(alert.post_url)}&alert_id=${alert.id}`)}
+            onClick={() => router.push(`/threads?url=${encodeURIComponent(alert.post_url)}`)}
             style={{ padding: "7px 14px", fontSize: "12px", fontWeight: 600, borderRadius: "6px", border: "1px solid #555", backgroundColor: "#333", color: "#FFFFFF", cursor: "pointer", fontFamily: "'DM Sans', system-ui, sans-serif", transition: "all 150ms" }}
             onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "#E8651A"; e.currentTarget.style.color = "#FFF"; e.currentTarget.style.borderColor = "#E8651A"; }}
             onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "#333"; e.currentTarget.style.color = "#FFFFFF"; e.currentTarget.style.borderColor = "#555"; }}
@@ -308,7 +308,7 @@ export default function DashboardPage() {
             Analyze Thread
           </button>
           <button
-            onClick={() => router.push(`/threads?url=${encodeURIComponent(alert.post_url)}&draft=true&alert_id=${alert.id}`)}
+            onClick={() => router.push(`/drafts?alert_id=${alert.id}`)}
             style={{ padding: "7px 14px", fontSize: "12px", fontWeight: 600, borderRadius: "6px", border: "1px solid #555", backgroundColor: "#333", color: "#FFFFFF", cursor: "pointer", fontFamily: "'DM Sans', system-ui, sans-serif", transition: "all 150ms" }}
             onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "#444"; e.currentTarget.style.color = "#FFF"; }}
             onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "#333"; e.currentTarget.style.color = "#FFFFFF"; }}

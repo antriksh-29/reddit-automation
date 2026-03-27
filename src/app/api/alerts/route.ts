@@ -36,6 +36,27 @@ export async function GET(request: NextRequest) {
   }
 
   const params = request.nextUrl.searchParams;
+
+  // Single alert lookup by ID
+  const alertId = params.get("id");
+  if (alertId) {
+    const { data: alert } = await supabase
+      .from("alerts")
+      .select(`
+        id, post_title, post_body, post_author, post_url, post_created_at,
+        upvotes, num_comments, priority_score, priority_level, category,
+        monitored_subreddits!inner(subreddit_name)
+      `)
+      .eq("id", alertId)
+      .eq("business_id", business.id)
+      .single();
+
+    if (!alert) return NextResponse.json({ error: "Alert not found" }, { status: 404 });
+
+    const subreddit_name = (alert.monitored_subreddits as unknown as { subreddit_name: string })?.subreddit_name;
+    return NextResponse.json({ alert: { ...alert, subreddit_name } });
+  }
+
   const view = params.get("view") || "all";
   const priority = params.get("priority") || "all";
   const category = params.get("category") || "all";

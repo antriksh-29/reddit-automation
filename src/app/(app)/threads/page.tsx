@@ -35,13 +35,6 @@ interface ChatMessage {
   created_at: string;
 }
 
-interface CommentDraft {
-  id: string;
-  draft_text: string;
-  tone: string;
-  approval_state: string;
-}
-
 interface CreditEstimate {
   estimatedCredits: number;
   cached: boolean;
@@ -102,16 +95,6 @@ export default function ThreadsPage() {
   const searchParams = useSearchParams();
   const autoAnalyzedRef = useRef(false);
 
-  // Draft state
-  const [showDrafts, setShowDrafts] = useState(false);
-  const [drafts, setDrafts] = useState<CommentDraft[]>([]);
-  const [draftLoading, setDraftLoading] = useState(false);
-  const [draftRules, setDraftRules] = useState<string>("");
-  const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
-  const [editText, setEditText] = useState("");
-  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [alertIdForDraft, setAlertIdForDraft] = useState<string | null>(null);
 
   // Confirmation dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -123,20 +106,12 @@ export default function ThreadsPage() {
 
   useEffect(() => { fetchHistory(); }, []);
 
-  // Auto-analyze from dashboard — show confirmation dialog first
+  // Auto-analyze from dashboard
   useEffect(() => {
     const url = searchParams.get("url");
-    const isDraft = searchParams.get("draft") === "true";
-    const alertId = searchParams.get("alert_id");
     if (url && !autoAnalyzedRef.current) {
       autoAnalyzedRef.current = true;
-      if (alertId) setAlertIdForDraft(alertId);
-      if (isDraft) {
-        // Will auto-open drafts after analysis completes
-        showConfirmation(url, true);
-      } else {
-        showConfirmation(url);
-      }
+      showConfirmation(url);
     }
   }, [searchParams]);
 
@@ -152,11 +127,8 @@ export default function ThreadsPage() {
     }
   }
 
-  const [pendingDraftMode, setPendingDraftMode] = useState(false);
-
   /** Show confirmation dialog with dynamic credit estimate */
-  async function showConfirmation(url: string, autoDraft = false) {
-    if (autoDraft) setPendingDraftMode(true);
+  async function showConfirmation(url: string) {
     const validationError = validateRedditUrl(url);
     if (validationError) {
       setError(validationError);
@@ -227,12 +199,6 @@ export default function ThreadsPage() {
 
       if (!data.cached) refreshCredits();
       fetchHistory();
-
-      // Auto-open drafts if came from "Draft Response" button
-      if (pendingDraftMode && alertIdForDraft) {
-        setPendingDraftMode(false);
-        generateDrafts(alertIdForDraft);
-      }
     } catch {
       setError("Failed to analyze thread. Please try again.");
     } finally {
@@ -307,89 +273,6 @@ export default function ThreadsPage() {
     } finally {
       setChatLoading(false);
     }
-  }
-
-  // === DRAFT FUNCTIONS ===
-
-  async function generateDrafts(alertId: string) {
-    setShowDrafts(true);
-    setDraftLoading(true);
-    setDrafts([]);
-    setDraftRules("");
-
-    try {
-      const res = await fetch("/api/drafts/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ alert_id: alertId }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        if (res.status === 402) {
-          setError(`Insufficient credits for draft generation. Balance: ${data.balance}`);
-        } else {
-          setError(data.error || "Failed to generate drafts");
-        }
-        setShowDrafts(false);
-        return;
-      }
-
-      setDrafts(data.drafts || []);
-      setDraftRules(data.subreddit_rules || "");
-      refreshCredits();
-    } catch {
-      setError("Failed to generate drafts. Please try again.");
-      setShowDrafts(false);
-    } finally {
-      setDraftLoading(false);
-    }
-  }
-
-  async function regenerateDraft(draftId: string) {
-    setRegeneratingId(draftId);
-    try {
-      const res = await fetch("/api/drafts/generate", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ draft_id: draftId }),
-      });
-
-      const data = await res.json();
-      if (res.ok && data.draft) {
-        setDrafts((prev) => prev.map((d) => d.id === draftId ? data.draft : d));
-        refreshCredits();
-      } else if (res.status === 402) {
-        setError(`Insufficient credits. Balance: ${data.balance}`);
-      }
-    } catch {
-      setError("Failed to regenerate draft");
-    } finally {
-      setRegeneratingId(null);
-    }
-  }
-
-  function copyDraft(draftId: string, text: string) {
-    navigator.clipboard.writeText(text);
-    setCopiedId(draftId);
-    setTimeout(() => setCopiedId(null), 2000);
-  }
-
-  function startEditing(draft: CommentDraft) {
-    setEditingDraftId(draft.id);
-    setEditText(draft.draft_text);
-  }
-
-  function saveEdit(draftId: string) {
-    setDrafts((prev) => prev.map((d) => d.id === draftId ? { ...d, draft_text: editText } : d));
-    setEditingDraftId(null);
-    setEditText("");
-    // Persist to DB (non-blocking)
-    fetch("/api/drafts/generate", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ draft_id: draftId, text: editText }),
-    }).catch(() => {});
   }
 
   function groupByDate(items: ThreadSummary[]): Record<string, ThreadSummary[]> {
@@ -659,23 +542,9 @@ export default function ThreadsPage() {
                 <div style={{ display: "flex", gap: "12px", fontSize: "12px", color: "#6B6B68" }}>
                   <span>{activeAnalysis.comment_count} comments analyzed</span>
                 </div>
-                <div style={{ display: "flex", gap: "12px", marginTop: "8px", alignItems: "center" }}>
-                  <a href={activeAnalysis.reddit_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: "12px", color: "#E8651A", textDecoration: "none" }}>
-                    View full thread on Reddit ↗
-                  </a>
-                  {alertIdForDraft && !showDrafts && (
-                    <button
-                      onClick={() => generateDrafts(alertIdForDraft)}
-                      style={{
-                        padding: "6px 14px", fontSize: "12px", fontWeight: 600, borderRadius: "6px",
-                        border: "none", backgroundColor: "#E8651A", color: "#FFF", cursor: "pointer",
-                        fontFamily: "'DM Sans', system-ui, sans-serif",
-                      }}
-                    >
-                      Draft Response
-                    </button>
-                  )}
-                </div>
+                <a href={activeAnalysis.reddit_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: "12px", color: "#E8651A", textDecoration: "none", marginTop: "4px", display: "inline-block" }}>
+                  View full thread on Reddit ↗
+                </a>
               </div>
 
               {/* AI Analysis — left-aligned */}
@@ -829,7 +698,7 @@ export default function ThreadsPage() {
               </div>
 
               {/* Suggested questions — BELOW the chat input */}
-              {messages.length === 0 && !showDrafts && (
+              {messages.length === 0 && (
                 <div style={{ padding: "4px 24px 14px", display: "flex", flexWrap: "wrap", gap: "6px" }}>
                   {SUGGESTED_QUESTIONS.map((q) => (
                     <button
@@ -852,149 +721,6 @@ export default function ThreadsPage() {
               )}
             </div>
 
-            {/* ===== DRAFT PANEL (slides up from bottom) ===== */}
-            {showDrafts && (
-              <div style={{
-                borderTop: "1px solid #2A2A2A",
-                backgroundColor: "#111",
-                maxHeight: "60vh",
-                overflowY: "auto",
-                padding: "20px 24px",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
-                  <h3 style={{ fontFamily: "'Satoshi', system-ui, sans-serif", fontSize: "16px", fontWeight: 700, color: "#F5F5F3" }}>
-                    Draft Responses
-                  </h3>
-                  <button
-                    onClick={() => setShowDrafts(false)}
-                    style={{ background: "none", border: "none", color: "#6B6B68", cursor: "pointer", fontSize: "18px" }}
-                  >
-                    ✕
-                  </button>
-                </div>
-
-                {/* Subreddit rules */}
-                {draftRules && (
-                  <div style={{ backgroundColor: "rgba(245, 158, 11, 0.06)", border: "1px solid rgba(245, 158, 11, 0.2)", borderRadius: "8px", padding: "12px 14px", marginBottom: "16px" }}>
-                    <div style={{ fontSize: "12px", fontWeight: 600, color: "#F59E0B", marginBottom: "6px" }}>Subreddit Rules</div>
-                    <div style={{ fontSize: "12px", color: "#C0C0BD", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
-                      {draftRules.slice(0, 500)}
-                    </div>
-                  </div>
-                )}
-
-                {/* Loading */}
-                {draftLoading && (
-                  <div style={{ textAlign: "center", padding: "30px" }}>
-                    <div style={{ width: "24px", height: "24px", border: "2px solid #2A2A2A", borderTopColor: "#E8651A", borderRadius: "50%", animation: "spin 0.6s linear infinite", margin: "0 auto 12px" }} />
-                    <p style={{ fontSize: "13px", color: "#A3A3A0" }}>Generating drafts...</p>
-                  </div>
-                )}
-
-                {/* Drafts */}
-                {!draftLoading && drafts.map((draft) => (
-                  <div
-                    key={draft.id}
-                    style={{
-                      backgroundColor: "#1A1A1A",
-                      border: "1px solid #2A2A2A",
-                      borderRadius: "10px",
-                      padding: "16px",
-                      marginBottom: "12px",
-                    }}
-                  >
-                    <div style={{ fontSize: "12px", fontWeight: 600, color: "#E8651A", marginBottom: "10px", textTransform: "uppercase" }}>
-                      {draft.tone}
-                    </div>
-
-                    {editingDraftId === draft.id ? (
-                      <>
-                        <textarea
-                          value={editText}
-                          onChange={(e) => setEditText(e.target.value)}
-                          style={{
-                            width: "100%", minHeight: "120px", backgroundColor: "#0A0A0A",
-                            border: "1px solid #E8651A", borderRadius: "8px", padding: "12px",
-                            fontSize: "14px", color: "#F5F5F3", outline: "none", resize: "vertical",
-                            fontFamily: "'DM Sans', system-ui, sans-serif", lineHeight: 1.7,
-                            boxSizing: "border-box",
-                          }}
-                        />
-                        <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
-                          <button
-                            onClick={() => saveEdit(draft.id)}
-                            style={{ padding: "6px 14px", fontSize: "12px", fontWeight: 600, borderRadius: "6px", border: "none", backgroundColor: "#E8651A", color: "#FFF", cursor: "pointer", fontFamily: "'DM Sans', system-ui, sans-serif" }}
-                          >
-                            Save
-                          </button>
-                          <button
-                            onClick={() => { setEditingDraftId(null); setEditText(""); }}
-                            style={{ padding: "6px 14px", fontSize: "12px", borderRadius: "6px", border: "1px solid #2A2A2A", backgroundColor: "transparent", color: "#A3A3A0", cursor: "pointer", fontFamily: "'DM Sans', system-ui, sans-serif" }}
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <p style={{ fontSize: "14px", color: "#F5F5F3", lineHeight: 1.7, whiteSpace: "pre-wrap", marginBottom: "12px" }}>
-                          {draft.draft_text}
-                        </p>
-
-                        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                          <button
-                            onClick={() => copyDraft(draft.id, draft.draft_text)}
-                            style={{
-                              padding: "6px 14px", fontSize: "12px", fontWeight: 500, borderRadius: "6px",
-                              border: "1px solid #2A2A2A", backgroundColor: copiedId === draft.id ? "rgba(34, 197, 94, 0.12)" : "transparent",
-                              color: copiedId === draft.id ? "#22C55E" : "#A3A3A0", cursor: "pointer",
-                              fontFamily: "'DM Sans', system-ui, sans-serif", transition: "all 150ms",
-                            }}
-                          >
-                            {copiedId === draft.id ? "Copied!" : "Copy"}
-                          </button>
-                          <button
-                            onClick={() => startEditing(draft)}
-                            style={{ padding: "6px 14px", fontSize: "12px", fontWeight: 500, borderRadius: "6px", border: "1px solid #2A2A2A", backgroundColor: "transparent", color: "#A3A3A0", cursor: "pointer", fontFamily: "'DM Sans', system-ui, sans-serif" }}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => regenerateDraft(draft.id)}
-                            disabled={regeneratingId === draft.id}
-                            style={{
-                              padding: "6px 14px", fontSize: "12px", fontWeight: 500, borderRadius: "6px",
-                              border: "1px solid #2A2A2A", backgroundColor: "transparent",
-                              color: "#A3A3A0", cursor: "pointer", fontFamily: "'DM Sans', system-ui, sans-serif",
-                              opacity: regeneratingId === draft.id ? 0.5 : 1,
-                              display: "flex", alignItems: "center", gap: "6px",
-                            }}
-                          >
-                            {regeneratingId === draft.id && (
-                              <span style={{ width: "12px", height: "12px", border: "2px solid #2A2A2A", borderTopColor: "#E8651A", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
-                            )}
-                            Regenerate
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ))}
-
-                {/* No drafts yet — show generate button */}
-                {!draftLoading && drafts.length === 0 && alertIdForDraft && (
-                  <div style={{ textAlign: "center", padding: "20px" }}>
-                    <p style={{ fontSize: "14px", color: "#A3A3A0", marginBottom: "12px" }}>No drafts generated yet.</p>
-                    <button
-                      onClick={() => generateDrafts(alertIdForDraft)}
-                      style={{ padding: "10px 24px", fontSize: "14px", fontWeight: 600, borderRadius: "8px", border: "none", backgroundColor: "#E8651A", color: "#FFF", cursor: "pointer", fontFamily: "'DM Sans', system-ui, sans-serif" }}
-                    >
-                      Generate Drafts
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
           </>
         )}
       </div>
