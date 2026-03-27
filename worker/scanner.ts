@@ -373,7 +373,7 @@ async function scoreAndAlert(
     priority_level: priority.level,
     priority_factors: priority.factors,
     category,
-    email_status: priority.level === "high" ? "pending" : "skipped",
+    email_status: (priority.level === "high" || priority.level === "medium") ? "pending" : "skipped",
   });
 
   if (alertError) {
@@ -390,8 +390,8 @@ async function scoreAndAlert(
       `→ ${priority.level} (${priority.score}) [${category}]`
   );
 
-  // Send email for high-priority alerts
-  if (priority.level === "high") {
+  // Send email for high and medium priority alerts
+  if (priority.level === "high" || priority.level === "medium") {
     const minutesAgo = Math.floor((Date.now() - post.created_utc * 1000) / 60000);
     const timeAgo = minutesAgo < 60 ? `${minutesAgo}m ago` : `${Math.floor(minutesAgo / 60)}h ago`;
 

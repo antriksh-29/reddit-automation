@@ -465,18 +465,106 @@ export default function SettingsPage() {
         )}
 
         {/* Notifications Tab */}
-        {activeTab === "Notifications" && (
-          <div>
-            <h2 style={{ fontFamily: "'Satoshi', system-ui, sans-serif", fontSize: "20px", fontWeight: 700, color: "#F5F5F3", marginBottom: "24px" }}>
-              Notifications
-            </h2>
-            <div style={{ backgroundColor: "#141414", border: "1px solid #2A2A2A", borderRadius: "8px", padding: "16px" }}>
-              <p style={{ fontSize: "14px", color: "#A3A3A0" }}>
-                Email notifications for high-priority alerts will be available once email service (Amazon SES) is configured.
-              </p>
+        {activeTab === "Notifications" && (() => {
+          const [emailEnabled, setEmailEnabled] = useState(true);
+          const [threshold, setThreshold] = useState("high_medium");
+          const [notifSaving, setNotifSaving] = useState(false);
+          const [notifMsg, setNotifMsg] = useState<string | null>(null);
+
+          async function saveNotifications() {
+            setNotifSaving(true);
+            setNotifMsg(null);
+            const res = await fetch("/api/settings", {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ section: "notifications", email_enabled: emailEnabled, alert_threshold: threshold }),
+            });
+            setNotifSaving(false);
+            setNotifMsg(res.ok ? "Saved" : "Failed to save");
+            setTimeout(() => setNotifMsg(null), 2000);
+          }
+
+          return (
+            <div>
+              <h2 style={{ fontFamily: "'Satoshi', system-ui, sans-serif", fontSize: "20px", fontWeight: 700, color: "#F5F5F3", marginBottom: "24px" }}>
+                Notifications
+              </h2>
+
+              <div style={{ backgroundColor: "#141414", border: "1px solid #2A2A2A", borderRadius: "12px", padding: "20px", marginBottom: "16px" }}>
+                {/* Email toggle */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px" }}>
+                  <div>
+                    <div style={{ fontSize: "14px", fontWeight: 500, color: "#F5F5F3", marginBottom: "4px" }}>Email Alerts</div>
+                    <div style={{ fontSize: "13px", color: "#A3A3A0" }}>Receive email notifications when relevant posts are found</div>
+                  </div>
+                  <button
+                    onClick={() => setEmailEnabled(!emailEnabled)}
+                    style={{
+                      width: "44px", height: "24px", borderRadius: "12px", border: "none",
+                      backgroundColor: emailEnabled ? "#E8651A" : "#2A2A2A",
+                      cursor: "pointer", position: "relative", transition: "background-color 150ms",
+                    }}
+                  >
+                    <span style={{
+                      position: "absolute", top: "2px", width: "20px", height: "20px",
+                      borderRadius: "50%", backgroundColor: "#FFF", transition: "left 150ms",
+                      left: emailEnabled ? "22px" : "2px",
+                    }} />
+                  </button>
+                </div>
+
+                {/* Threshold */}
+                {emailEnabled && (
+                  <div>
+                    <div style={{ fontSize: "14px", fontWeight: 500, color: "#F5F5F3", marginBottom: "8px" }}>Alert Threshold</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {[
+                        { key: "all", label: "All alerts", desc: "High + Medium + Low priority" },
+                        { key: "high_medium", label: "High + Medium only", desc: "Recommended — filters out noise" },
+                        { key: "high_only", label: "High priority only", desc: "Only the most important alerts" },
+                      ].map((opt) => (
+                        <button
+                          key={opt.key}
+                          onClick={() => setThreshold(opt.key)}
+                          style={{
+                            display: "flex", alignItems: "center", gap: "12px",
+                            padding: "12px 14px", borderRadius: "8px",
+                            border: `1px solid ${threshold === opt.key ? "#E8651A" : "#2A2A2A"}`,
+                            backgroundColor: threshold === opt.key ? "rgba(232, 101, 26, 0.08)" : "transparent",
+                            cursor: "pointer", textAlign: "left",
+                          }}
+                        >
+                          <span style={{
+                            width: "16px", height: "16px", borderRadius: "50%",
+                            border: `2px solid ${threshold === opt.key ? "#E8651A" : "#555"}`,
+                            backgroundColor: threshold === opt.key ? "#E8651A" : "transparent",
+                            display: "inline-flex", alignItems: "center", justifyContent: "center",
+                            flexShrink: 0,
+                          }}>
+                            {threshold === opt.key && <span style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: "#FFF" }} />}
+                          </span>
+                          <div>
+                            <div style={{ fontSize: "14px", fontWeight: 500, color: "#F5F5F3" }}>{opt.label}</div>
+                            <div style={{ fontSize: "12px", color: "#A3A3A0" }}>{opt.desc}</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <button onClick={saveNotifications} disabled={notifSaving} style={{
+                padding: "10px 24px", fontSize: "14px", fontWeight: 600, borderRadius: "8px",
+                border: "none", backgroundColor: "#E8651A", color: "#FFF", cursor: "pointer",
+                opacity: notifSaving ? 0.5 : 1, fontFamily: "'DM Sans', system-ui, sans-serif",
+              }}>
+                {notifSaving ? "Saving..." : "Save Preferences"}
+              </button>
+              {notifMsg && <span style={{ marginLeft: "12px", fontSize: "13px", color: notifMsg === "Saved" ? "#22C55E" : "#EF4444" }}>{notifMsg}</span>}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Usage & Billing Tab */}
         {activeTab === "Usage & Billing" && (() => {

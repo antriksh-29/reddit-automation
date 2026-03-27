@@ -171,6 +171,89 @@ async function main() {
       console.error("[worker] Scan cycle failed:", error);
     }
   }, SCAN_INTERVAL_MS);
+
+  // 6. Monthly credit reset check (runs every scan cycle)
+  // Also runs once on startup
+  await checkMonthlyCreditResets();
+  setInterval(async () => {
+    try {
+      await checkMonthlyCreditResets();
+    } catch (error) {
+      console.error("[worker] Credit reset check failed:", error);
+    }
+  }, SCAN_INTERVAL_MS);
+}
+
+/**
+ * Monthly credit reset for Growth plan users.
+ * Checks all growth users whose last_reset_at is >30 days ago
+ * and resets their credits to 250.
+ */
+async function checkMonthlyCreditResets() {
+  const { createClient } = await import("@supabase/supabase-js");
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } }
+  );
+
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
+
+  // Find growth users whose credits haven't been reset in 30+ days
+  const { data: users } = await supabase
+    .from("users")
+    .select("id")
+    .eq("plan_tier", "growth");
+
+  if (!users || users.length === 0) return;
+
+  for (const user of users) {
+    const { data: balance } = await supabase
+      .from("credit_balances")
+      .select("balance, last_reset_at")
+      .eq("user_id", user.id)
+      .single();
+
+    if (!balance) continue;
+
+    // Check if last reset was >30 days ago
+    if (balance.last_reset_at && new Date(balance.last_reset_at) > new Date(thirtyDaysAgo)) {
+      continue; // Already reset recently
+    }
+
+    // Reset credits to 250
+    const { error } = await supabase
+      .from("credit_balances")
+      .update({
+        balance: 250.0,
+        lifetime_used: 0,
+        last_reset_at: new Date().toISOString(),
+      })
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.error(`[worker] Credit reset failed for user ${user.id}:`, error.message);
+      continue;
+    }
+
+    // Log the transaction
+    await supabase.from("credit_transactions").insert({
+      user_id: user.id,
+      action_type: "monthly_reset",
+      credits_used: -(250.0 - balance.balance), // Negative = added
+      balance_after: 250.0,
+      tokens_consumed: 0,
+    });
+
+    console.log(`[worker] Monthly credit reset: user ${user.id} → 250 credits`);
+
+    await supabase.from("event_logs").insert({
+      user_id: user.id,
+      event_type: "credits.monthly_reset",
+      event_data: { previous_balance: balance.balance, new_balance: 250.0 },
+      source: "cron",
+    });
+  }
 }
 
 main().catch((error) => {

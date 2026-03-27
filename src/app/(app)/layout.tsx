@@ -1,6 +1,7 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
+import { TrialExpiredBanner } from "@/components/layout/trial-expired-banner";
 
 export default async function AppLayout({
   children,
@@ -27,5 +28,22 @@ export default async function AppLayout({
     redirect("/onboarding");
   }
 
-  return <AppShell>{children}</AppShell>;
+  // Check trial status for free plan users
+  const { data: userData } = await supabase
+    .from("users")
+    .select("plan_tier, trial_ends_at")
+    .eq("id", user.id)
+    .single();
+
+  const isTrialExpired =
+    userData?.plan_tier === "free" &&
+    userData?.trial_ends_at &&
+    new Date(userData.trial_ends_at) < new Date();
+
+  return (
+    <AppShell>
+      {isTrialExpired && <TrialExpiredBanner />}
+      {children}
+    </AppShell>
+  );
 }

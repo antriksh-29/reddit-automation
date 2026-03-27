@@ -25,7 +25,7 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-screen bg-bg-primary text-text-primary antialiased">
+      <body style={{ minHeight: "100vh", backgroundColor: "#0A0A0A", color: "#FFFFFF" }}>
         {children}
       </body>
     </html>

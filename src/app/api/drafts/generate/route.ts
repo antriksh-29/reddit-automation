@@ -36,16 +36,26 @@ export async function POST(request: NextRequest) {
   const { alert_id } = await request.json();
   if (!alert_id) return NextResponse.json({ error: "alert_id required" }, { status: 400 });
 
-  // Get alert details
-  const { data: alert } = await supabase
+  // Get alert details (separate queries to avoid RLS join issues)
+  const { data: alert, error: alertError } = await supabase
     .from("alerts")
-    .select("*, monitored_subreddits!inner(subreddit_name)")
+    .select("*")
     .eq("id", alert_id)
     .single();
 
-  if (!alert) return NextResponse.json({ error: "Alert not found" }, { status: 404 });
+  if (!alert || alertError) {
+    console.error("Alert fetch failed:", alertError?.message);
+    return NextResponse.json({ error: "Alert not found" }, { status: 404 });
+  }
 
-  const subredditName = (alert.monitored_subreddits as { subreddit_name: string })?.subreddit_name || "unknown";
+  // Get subreddit name separately
+  const { data: sub } = await supabase
+    .from("monitored_subreddits")
+    .select("subreddit_name")
+    .eq("id", alert.subreddit_id)
+    .single();
+
+  const subredditName = sub?.subreddit_name || "unknown";
 
   // Fetch subreddit rules
   let rules = "No specific rules available.";
@@ -210,8 +220,11 @@ Always return valid JSON.`,
       subreddit_rules: rules,
     });
   } catch (err) {
-    console.error("Draft generation failed:", err);
-    return NextResponse.json({ error: "Failed to generate drafts" }, { status: 500 });
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    const errorStack = err instanceof Error ? err.stack : undefined;
+    console.error("Draft generation failed:", errorMessage);
+    if (errorStack) console.error("Stack:", errorStack);
+    return NextResponse.json({ error: `Failed to generate drafts: ${errorMessage}` }, { status: 500 });
   }
 }
 
@@ -234,17 +247,32 @@ export async function PATCH(request: NextRequest) {
 
   const { draft_id } = await request.json();
 
-  // Get existing draft
+  // Get existing draft (separate queries to avoid RLS join issues)
   const { data: existingDraft } = await supabase
     .from("comment_drafts")
-    .select("*, alerts!inner(post_title, post_body, category, monitored_subreddits!inner(subreddit_name))")
+    .select("*")
     .eq("id", draft_id)
     .single();
 
   if (!existingDraft) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
 
-  const alert = existingDraft.alerts as Record<string, unknown>;
-  const sub = (alert.monitored_subreddits as { subreddit_name: string })?.subreddit_name || "unknown";
+  // Get alert details separately
+  const { data: draftAlert } = await supabase
+    .from("alerts")
+    .select("post_title, post_body, category, subreddit_id")
+    .eq("id", existingDraft.alert_id)
+    .single();
+
+  if (!draftAlert) return NextResponse.json({ error: "Associated alert not found" }, { status: 404 });
+
+  // Get subreddit name
+  const { data: draftSub } = await supabase
+    .from("monitored_subreddits")
+    .select("subreddit_name")
+    .eq("id", draftAlert.subreddit_id)
+    .single();
+
+  const sub = draftSub?.subreddit_name || "unknown";
 
   try {
     const toneGuide = existingDraft.tone?.includes("Story") || existingDraft.tone?.includes("Experience")
@@ -254,8 +282,8 @@ export async function PATCH(request: NextRequest) {
     const prompt = `Regenerate this Reddit comment for a post in r/${sub}.
 
 POST:
-Title: ${alert.post_title}
-Body: ${(alert.post_body as string || "").slice(0, 800)}
+Title: ${draftAlert.post_title}
+Body: ${(draftAlert.post_body as string || "").slice(0, 800)}
 
 TONE: ${existingDraft.tone}
 ${toneGuide}

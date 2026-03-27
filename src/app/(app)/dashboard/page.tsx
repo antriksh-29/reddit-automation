@@ -60,6 +60,7 @@ export default function DashboardPage() {
   const [priorityFilter, setPriorityFilter] = useState<Set<string>>(new Set());
   const [categoryFilter, setCategoryFilter] = useState<Set<string>>(new Set());
   const [subredditFilter, setSubredditFilter] = useState<Set<string>>(new Set());
+  const [dateFilter, setDateFilter] = useState<string>("");
   const [sort, setSort] = useState("priority");
 
   // Dropdown states
@@ -115,8 +116,20 @@ export default function DashboardPage() {
     if (subredditFilter.size > 0) {
       filtered = filtered.filter((a) => subredditFilter.has(a.subreddit_name));
     }
+    if (dateFilter) {
+      const now = new Date();
+      let cutoff: Date;
+      switch (dateFilter) {
+        case "today": cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate()); break;
+        case "yesterday": cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1); break;
+        case "week": cutoff = new Date(now.getTime() - 7 * 86400000); break;
+        case "month": cutoff = new Date(now.getTime() - 30 * 86400000); break;
+        default: cutoff = new Date(0);
+      }
+      filtered = filtered.filter((a) => new Date(a.post_created_at) >= cutoff);
+    }
     setAlerts(filtered);
-  }, [allAlerts, viewFilter, priorityFilter, categoryFilter, subredditFilter]);
+  }, [allAlerts, viewFilter, priorityFilter, categoryFilter, subredditFilter, dateFilter]);
 
   useEffect(() => {
     fetch("/api/subreddits")
@@ -172,7 +185,7 @@ export default function DashboardPage() {
   const mediumHighNew = newAlerts.filter((a) => a.priority_level === "high" || a.priority_level === "medium");
   const lowNew = newAlerts.filter((a) => a.priority_level === "low");
 
-  const activeFilters = viewFilter.size + priorityFilter.size + categoryFilter.size + subredditFilter.size;
+  const activeFilters = viewFilter.size + priorityFilter.size + categoryFilter.size + subredditFilter.size + (dateFilter ? 1 : 0);
 
   // Toggle a value in a Set (multi-select)
   function toggleFilter(setter: React.Dispatch<React.SetStateAction<Set<string>>>, value: string) {
@@ -450,12 +463,42 @@ export default function DashboardPage() {
                   )}
                 </div>
 
+                {/* Date Range */}
+                <div
+                  style={{ position: "relative" }}
+                  onMouseEnter={() => setHoveredFilter("date")}
+                >
+                  <div style={filterRowStyle(hoveredFilter === "date")}>
+                    <span>Date Range {dateFilter && <span style={{ color: "#E8651A" }}>(1)</span>}</span>
+                    <span style={{ fontSize: "10px", color: "#6B6B68" }}>▸</span>
+                  </div>
+                  {hoveredFilter === "date" && (
+                    <div style={subMenuStyle}>
+                      {[
+                        { key: "today", label: "Today" },
+                        { key: "yesterday", label: "Since Yesterday" },
+                        { key: "week", label: "This Week" },
+                        { key: "month", label: "This Month" },
+                      ].map((d) => (
+                        <button
+                          key={d.key}
+                          onClick={() => setDateFilter(dateFilter === d.key ? "" : d.key)}
+                          style={checkOptionStyle(dateFilter === d.key)}
+                        >
+                          <span style={{ width: "14px", height: "14px", borderRadius: "3px", border: dateFilter === d.key ? "none" : "1px solid #6B6B68", backgroundColor: dateFilter === d.key ? "#E8651A" : "transparent", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: "10px", color: "#FFF", flexShrink: 0 }}>{dateFilter === d.key ? "✓" : ""}</span>
+                          {d.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 {/* Clear all filters */}
                 {activeFilters > 0 && (
                   <>
                     <div style={{ height: "1px", backgroundColor: "#2A2A2A", margin: "4px 0" }} />
                     <button
-                      onClick={() => { setViewFilter(new Set()); setPriorityFilter(new Set()); setCategoryFilter(new Set()); setSubredditFilter(new Set()); }}
+                      onClick={() => { setViewFilter(new Set()); setPriorityFilter(new Set()); setCategoryFilter(new Set()); setSubredditFilter(new Set()); setDateFilter(""); }}
                       style={{ ...checkOptionStyle(false), color: "#EF4444", fontSize: "12px" }}
                     >
                       Clear all filters

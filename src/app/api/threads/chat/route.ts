@@ -83,7 +83,13 @@ BUSINESS CONTEXT:
 - ICP: ${business?.icp_description || "N/A"}
 - Keywords: ${JSON.stringify(business?.keywords || {})}
 
-Answer the user's follow-up questions about this thread. Be specific, reference users and comments from the thread where relevant. Keep answers concise and actionable.`;
+Answer the user's follow-up questions about this thread. Be specific, reference users and comments from the thread where relevant. Keep answers concise and actionable.
+
+FORMATTING RULES:
+- Do NOT use markdown formatting (no #, ##, *, **, -, etc.)
+- Use plain text only
+- Use numbered lists (1. 2. 3.) or simple line breaks for structure
+- Keep paragraphs short and readable`;
 
   try {
     const chatPrompt = contextMessages
@@ -109,9 +115,12 @@ Answer the user's follow-up questions about this thread. Be specific, reference 
     });
 
     // Deduct credits
-    await deductCredits(user.id, "thread_chat", totalTokens, "claude-sonnet-4-20250514", thread_analysis_id);
+    const deductResult = await deductCredits(user.id, "thread_chat", totalTokens, "claude-sonnet-4-20250514", thread_analysis_id);
 
-    return NextResponse.json({ response: result.text });
+    return NextResponse.json({
+      response: result.text,
+      credits: { used: deductResult.creditsUsed, balanceAfter: deductResult.balanceAfter },
+    });
   } catch (err) {
     console.error("Chat failed:", err);
     return NextResponse.json({ error: "Failed to generate response" }, { status: 500 });

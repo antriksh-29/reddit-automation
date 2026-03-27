@@ -35,14 +35,16 @@ export async function POST(request: NextRequest) {
   const { reddit_url, alert_id } = await request.json();
   if (!reddit_url) return NextResponse.json({ error: "reddit_url required" }, { status: 400 });
 
-  // Check if we already have an analysis for this URL
+  // Check if we already have an analysis for this URL (strip query params for comparison)
+  const cleanedUrl = reddit_url.split("?")[0].split("#")[0].replace(/\/$/, "");
   const { data: existing } = await supabase
     .from("thread_analyses")
     .select("*")
     .eq("business_id", business.id)
-    .eq("reddit_url", reddit_url)
     .eq("analysis_status", "complete")
-    .single();
+    .eq("reddit_url", cleanedUrl)
+    .limit(1)
+    .maybeSingle();
 
   if (existing) {
     // Return existing analysis (no credit charge)
@@ -56,10 +58,19 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // Validate URL format
+    const cleanUrl = reddit_url.split("?")[0].split("#")[0];
+    if (!cleanUrl.includes("reddit.com/r/")) {
+      return NextResponse.json({ error: "Please enter a valid Reddit URL." }, { status: 400 });
+    }
+    if (!cleanUrl.match(/reddit\.com\/r\/\w+\/comments\/\w+/)) {
+      return NextResponse.json({ error: "This doesn't look like a Reddit post URL. Make sure it links to a specific post." }, { status: 400 });
+    }
+
     // Fetch thread from Reddit
     const threadData = await fetchRedditThread(reddit_url);
     if (!threadData) {
-      return NextResponse.json({ error: "Could not fetch thread from Reddit" }, { status: 400 });
+      return NextResponse.json({ error: "Could not fetch this thread. It may have been deleted, removed, or the subreddit may be private." }, { status: 400 });
     }
 
     // Build analysis prompt
@@ -83,7 +94,7 @@ export async function POST(request: NextRequest) {
       .insert({
         business_id: business.id,
         alert_id: alert_id || null,
-        reddit_url,
+        reddit_url: cleanedUrl,
         thread_title: threadData.title,
         summary: analysis.summary,
         pain_points: analysis.pain_points,
@@ -100,9 +111,14 @@ export async function POST(request: NextRequest) {
     if (insertError) throw insertError;
 
     // Deduct credits
-    await deductCredits(user.id, "thread_analysis", totalTokens, "claude-sonnet-4-20250514", threadAnalysis.id);
+    const deductResult = await deductCredits(user.id, "thread_analysis", totalTokens, "claude-sonnet-4-20250514", threadAnalysis.id);
 
-    return NextResponse.json({ analysis: threadAnalysis, messages: [], cached: false });
+    return NextResponse.json({
+      analysis: threadAnalysis,
+      messages: [],
+      cached: false,
+      credits: { used: deductResult.creditsUsed, balanceAfter: deductResult.balanceAfter },
+    });
   } catch (err) {
     console.error("Thread analysis failed:", err);
     return NextResponse.json({ error: "Analysis failed. Please try again." }, { status: 500 });
@@ -121,19 +137,32 @@ interface RedditThread {
 }
 
 async function fetchRedditThread(url: string): Promise<RedditThread | null> {
-  // Normalize URL to .json endpoint
-  let jsonUrl = url.replace(/\/$/, "");
-  if (!jsonUrl.endsWith(".json")) jsonUrl += ".json";
-  // Ensure it's a www.reddit.com URL
-  jsonUrl = jsonUrl.replace("://reddit.com", "://www.reddit.com");
-  if (!jsonUrl.includes("reddit.com")) return null;
-  jsonUrl += "?raw_json=1&limit=100";
+  // Strip query params and hash (utm_source, utm_medium, etc.)
+  let cleanUrl = url.split("?")[0].split("#")[0];
+
+  // Normalize URL
+  cleanUrl = cleanUrl.replace(/\/$/, "");
+  cleanUrl = cleanUrl.replace("://reddit.com", "://www.reddit.com");
+  cleanUrl = cleanUrl.replace("://old.reddit.com", "://www.reddit.com");
+
+  // Validate it's a Reddit post URL
+  if (!cleanUrl.includes("reddit.com/r/")) return null;
+  if (!cleanUrl.match(/reddit\.com\/r\/\w+\/comments\/\w+/)) return null;
+
+  // Add .json extension
+  if (!cleanUrl.endsWith(".json")) cleanUrl += ".json";
+
+  const jsonUrl = cleanUrl + "?raw_json=1&limit=100";
 
   const res = await fetch(jsonUrl, {
     headers: { "User-Agent": "Arete/1.0 (thread-analysis)" },
     redirect: "manual",
   });
 
+  // Handle various HTTP errors
+  if (res.status === 302) return null; // Redirect = post doesn't exist
+  if (res.status === 403) return null; // Private/quarantined subreddit
+  if (res.status === 404) return null; // Deleted post
   if (!res.ok) return null;
 
   const data = await res.json();

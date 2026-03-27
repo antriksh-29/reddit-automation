@@ -227,7 +227,7 @@ export async function runFirstScan(userId: string, res: Response): Promise<void>
             const intent = strongIntent.some((p) => p.test(postText)) ? 1.0 : weakIntent.some((p) => p.test(postText)) ? 0.5 : 0.0;
 
             const priorityScore = Math.round((relevanceScore * 0.4 + recency * 0.3 + velocity * 0.15 + intent * 0.15) * 100) / 100;
-            const priorityLevel = priorityScore > 0.7 ? "high" : priorityScore >= 0.4 ? "medium" : "low";
+            const priorityLevel = priorityScore > 0.5 ? "high" : priorityScore >= 0.35 ? "medium" : "low";
 
             if (priorityScore < 0.2) return null;
 

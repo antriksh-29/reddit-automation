@@ -59,7 +59,8 @@ export async function sendAlertEmail(
     ? alert.postBody.slice(0, 200) + (alert.postBody.length > 200 ? "..." : "")
     : "";
 
-  const subject = `🔴 High Priority Alert · r/${alert.subreddit} · ${alert.postTitle.slice(0, 80)}`;
+  const priorityEmoji = alert.priorityLevel === "high" ? "🔴" : "🟡";
+  const subject = `${priorityEmoji} ${alert.priorityLevel === "high" ? "High" : "Medium"} Priority Alert · r/${alert.subreddit} · ${alert.postTitle.slice(0, 80)}`;
 
   const htmlBody = `
 <!DOCTYPE html>
@@ -119,7 +120,7 @@ export async function sendAlertEmail(
 
     <!-- Footer -->
     <div style="font-size: 12px; color: #555; line-height: 1.6;">
-      <p>You're receiving this because you have email alerts enabled for high-priority posts.</p>
+      <p>You're receiving this because you have email alerts enabled for medium and high-priority posts.</p>
       <p>Manage your notification preferences in <a href="${process.env.NEXT_PUBLIC_APP_URL || "https://app.getarete.co"}/settings" style="color: #E8651A; text-decoration: none;">Settings</a>.</p>
     </div>
 
