@@ -1,5 +1,6 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { callOpenAI } from "@/lib/llm/openai";
 import { callClaude } from "@/lib/llm/anthropic";
 import { checkCredits, deductCredits } from "@/lib/credits/manager";
 
@@ -167,10 +168,15 @@ Return a JSON array with exactly 2 drafts:
 
 Return ONLY the JSON array, no other text.`;
 
-    const result = await callClaude({
-      model: "claude-sonnet-4-20250514",
-      maxTokens: 2000,
-      systemPrompt: `You are a real Reddit power user — someone who has been on Reddit for years, participates genuinely in communities, and has deep domain expertise. You write comments that get upvoted because they're genuinely helpful, not because they're promotional.
+    // Primary: OpenAI GPT-4o. Fallback: Claude Sonnet. Per TECH-SPEC.md §6.5
+    let result: { text: string; inputTokens: number; outputTokens: number };
+    let modelUsed = "gpt-4o";
+
+    try {
+      result = await callOpenAI({
+        model: "gpt-4o",
+        maxTokens: 2000,
+        systemPrompt: `You are a real Reddit power user — someone who has been on Reddit for years, participates genuinely in communities, and has deep domain expertise. You write comments that get upvoted because they're genuinely helpful, not because they're promotional.
 
 Your comments sound like they come from a person with real experience, not a marketing team. You use casual language, admit when things are complicated, share specific numbers from real experience, and ask thoughtful questions.
 
@@ -181,6 +187,16 @@ Reddit is not where deals close. It's where trust begins. Off-platform assets li
 Always return valid JSON.`,
       userMessage: prompt,
     });
+    } catch (openaiErr) {
+      console.error("[drafts] OpenAI failed, falling back to Claude:", (openaiErr as Error).message);
+      modelUsed = "claude-sonnet-4-20250514";
+      result = await callClaude({
+        model: "claude-sonnet-4-20250514",
+        maxTokens: 2000,
+        systemPrompt: `You are a real Reddit power user. Write authentic, helpful comments. Never write promotional content. Always return valid JSON.`,
+        userMessage: prompt,
+      });
+    }
 
     // Parse drafts
     let drafts: { tone: string; text: string }[];
@@ -213,7 +229,7 @@ Always return valid JSON.`,
     }
 
     // Deduct credits
-    await deductCredits(user.id, "draft_generation", totalTokens, "claude-sonnet-4-20250514", alert_id);
+    await deductCredits(user.id, "draft_generation", totalTokens, modelUsed, alert_id);
 
     return NextResponse.json({
       drafts: savedDrafts,
@@ -302,12 +318,17 @@ RULES:
 
 Return ONLY the comment text. No JSON, no quotes, no meta-commentary.`;
 
-    const result = await callClaude({
-      model: "claude-sonnet-4-20250514",
-      maxTokens: 600,
-      systemPrompt: "You are a real Reddit power user with years of genuine community participation. Write comments that get upvoted because they're helpful, specific, and human — not promotional. Return only the comment text.",
-      userMessage: prompt,
-    });
+    // Primary: OpenAI GPT-4o. Fallback: Claude Sonnet.
+    let result: { text: string; inputTokens: number; outputTokens: number };
+    let regenModel = "gpt-4o";
+    const sysPrompt = "You are a real Reddit power user with years of genuine community participation. Write comments that get upvoted because they're helpful, specific, and human — not promotional. Return only the comment text.";
+
+    try {
+      result = await callOpenAI({ model: "gpt-4o", maxTokens: 600, systemPrompt: sysPrompt, userMessage: prompt });
+    } catch {
+      regenModel = "claude-sonnet-4-20250514";
+      result = await callClaude({ model: "claude-sonnet-4-20250514", maxTokens: 600, systemPrompt: sysPrompt, userMessage: prompt });
+    }
 
     const totalTokens = result.inputTokens + result.outputTokens;
 
@@ -319,7 +340,7 @@ Return ONLY the comment text. No JSON, no quotes, no meta-commentary.`;
       .select()
       .single();
 
-    await deductCredits(user.id, "draft_regeneration", totalTokens, "claude-sonnet-4-20250514", draft_id);
+    await deductCredits(user.id, "draft_regeneration", totalTokens, regenModel, draft_id);
 
     return NextResponse.json({ draft: updated });
   } catch {
