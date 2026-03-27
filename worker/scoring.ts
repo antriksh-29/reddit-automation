@@ -81,21 +81,34 @@ export async function scoreRelevance(
     .replace("{{upvotes}}", String(post.ups))
     .replace("{{num_comments}}", String(post.num_comments));
 
+  // Primary: Claude Haiku. Fallback: GPT-5.4-mini. Per TECH-SPEC.md §6.5
+  let text = "";
+
   try {
     const response = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 100,
-      messages: [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
+      messages: [{ role: "user", content: prompt }],
     });
+    text = response.content[0].type === "text" ? response.content[0].text : "";
+  } catch (claudeErr) {
+    console.warn("[scoring] Haiku failed, falling back to GPT-5.4-mini:", (claudeErr as Error).message);
+    try {
+      const OpenAI = (await import("openai")).default;
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+      const gptRes = await openai.chat.completions.create({
+        model: "gpt-5.4-mini",
+        max_tokens: 100,
+        messages: [{ role: "user", content: prompt }],
+      });
+      text = gptRes.choices[0]?.message?.content || "";
+    } catch (gptErr) {
+      console.error("[scoring] Both Haiku and GPT-5.4-mini failed:", (gptErr as Error).message);
+      return { relevanceScore: 0.5, category: "industry_discussion" };
+    }
+  }
 
-    const text =
-      response.content[0].type === "text" ? response.content[0].text : "";
-
+  try {
     // Parse JSON from response (handle potential markdown wrapping)
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
@@ -122,8 +135,7 @@ export async function scoreRelevance(
 
     return { relevanceScore: score, category };
   } catch (error) {
-    console.error("[scoring] LLM call failed:", error);
-    // Fallback: return middle score to not discard the post
+    console.error("[scoring] Response parsing failed:", error);
     return { relevanceScore: 0.5, category: "industry_discussion" };
   }
 }

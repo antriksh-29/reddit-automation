@@ -98,12 +98,17 @@ FORMATTING RULES:
 
     const fullPrompt = chatPrompt ? `${chatPrompt}\n\nUser: ${message}` : message;
 
-    const result = await callClaude({
-      model: "claude-sonnet-4-20250514",
-      maxTokens: 1000,
-      systemPrompt,
-      userMessage: fullPrompt,
-    });
+    // Primary: Claude Sonnet. Fallback: GPT-5.4.
+    let result: { text: string; inputTokens: number; outputTokens: number };
+    let modelUsed = "claude-sonnet-4-20250514";
+
+    try {
+      result = await callClaude({ model: "claude-sonnet-4-20250514", maxTokens: 1000, systemPrompt, userMessage: fullPrompt });
+    } catch {
+      const { callOpenAI } = await import("@/lib/llm/openai");
+      modelUsed = "gpt-5.4";
+      result = await callOpenAI({ model: "gpt-5.4", maxTokens: 1000, systemPrompt, userMessage: fullPrompt });
+    }
 
     const totalTokens = result.inputTokens + result.outputTokens;
 
@@ -115,7 +120,7 @@ FORMATTING RULES:
     });
 
     // Deduct credits
-    const deductResult = await deductCredits(user.id, "thread_chat", totalTokens, "claude-sonnet-4-20250514", thread_analysis_id);
+    const deductResult = await deductCredits(user.id, "thread_chat", totalTokens, modelUsed, thread_analysis_id);
 
     return NextResponse.json({
       response: result.text,

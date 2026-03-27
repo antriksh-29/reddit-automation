@@ -17,7 +17,7 @@ export function getOpenAIClient(): OpenAI {
  * Failover: Claude Sonnet (handled at call site).
  */
 export async function callOpenAI({
-  model = "gpt-4o",
+  model = "gpt-5.4",
   systemPrompt,
   userMessage,
   maxTokens = 2000,

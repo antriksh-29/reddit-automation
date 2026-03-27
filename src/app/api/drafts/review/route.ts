@@ -118,12 +118,18 @@ Be honest but constructive. If the draft is good, say so. If it needs work, be s
 
 Return ONLY the JSON object, no other text.`;
 
-    const result = await callClaude({
-      model: "claude-sonnet-4-20250514",
-      maxTokens: 2000,
-      systemPrompt: "You are a Reddit community expert who reviews comment drafts for authenticity, rule compliance, and effectiveness. Always return valid JSON.",
-      userMessage: prompt,
-    });
+    // Primary: Claude Sonnet. Fallback: GPT-5.4.
+    let result: { text: string; inputTokens: number; outputTokens: number };
+    let modelUsed = "claude-sonnet-4-20250514";
+    const sysPrompt = "You are a Reddit community expert who reviews comment drafts for authenticity, rule compliance, and effectiveness. Always return valid JSON.";
+
+    try {
+      result = await callClaude({ model: "claude-sonnet-4-20250514", maxTokens: 2000, systemPrompt: sysPrompt, userMessage: prompt });
+    } catch {
+      const { callOpenAI } = await import("@/lib/llm/openai");
+      modelUsed = "gpt-5.4";
+      result = await callOpenAI({ model: "gpt-5.4", maxTokens: 2000, systemPrompt: sysPrompt, userMessage: prompt });
+    }
 
     // Parse response
     let review;
@@ -141,7 +147,7 @@ Return ONLY the JSON object, no other text.`;
     const totalTokens = result.inputTokens + result.outputTokens;
 
     // Deduct credits
-    await deductCredits(user.id, "draft_generation", totalTokens, "claude-sonnet-4-20250514", alert_id);
+    await deductCredits(user.id, "draft_generation", totalTokens, modelUsed, alert_id);
 
     return NextResponse.json({
       review: {

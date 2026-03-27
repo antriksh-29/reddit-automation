@@ -195,13 +195,25 @@ export async function runFirstScan(userId: string, res: Response): Promise<void>
             .replace("{{num_comments}}", String(post.num_comments));
 
           try {
-            const response = await anthropic.messages.create({
-              model: "claude-haiku-4-5-20251001",
-              max_tokens: 100,
-              messages: [{ role: "user", content: prompt }],
-            });
-
-            const text = response.content[0].type === "text" ? response.content[0].text : "";
+            // Primary: Haiku. Fallback: GPT-5.4-mini.
+            let text = "";
+            try {
+              const response = await anthropic.messages.create({
+                model: "claude-haiku-4-5-20251001",
+                max_tokens: 100,
+                messages: [{ role: "user", content: prompt }],
+              });
+              text = response.content[0].type === "text" ? response.content[0].text : "";
+            } catch {
+              const OpenAI = (await import("openai")).default;
+              const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+              const gptRes = await openai.chat.completions.create({
+                model: "gpt-5.4-mini",
+                max_tokens: 100,
+                messages: [{ role: "user", content: prompt }],
+              });
+              text = gptRes.choices[0]?.message?.content || "";
+            }
             const jsonMatch = text.match(/\{[\s\S]*\}/);
             if (!jsonMatch) return null;
 

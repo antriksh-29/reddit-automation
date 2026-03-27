@@ -76,13 +76,19 @@ export async function POST(request: NextRequest) {
     // Build analysis prompt
     const prompt = buildAnalysisPrompt(threadData, business);
 
-    // Call Claude Sonnet
-    const result = await callClaude({
-      model: "claude-sonnet-4-20250514",
-      maxTokens: 2000,
-      systemPrompt: "You are a business intelligence analyst. Analyze Reddit threads to extract actionable insights for businesses. Always return valid JSON.",
-      userMessage: prompt,
-    });
+    // Primary: Claude Sonnet. Fallback: GPT-5.4. Per TECH-SPEC.md §6.5
+    let result: { text: string; inputTokens: number; outputTokens: number };
+    let modelUsed = "claude-sonnet-4-20250514";
+    const sysPrompt = "You are a business intelligence analyst. Analyze Reddit threads to extract actionable insights for businesses. Always return valid JSON.";
+
+    try {
+      result = await callClaude({ model: "claude-sonnet-4-20250514", maxTokens: 2000, systemPrompt: sysPrompt, userMessage: prompt });
+    } catch (claudeErr) {
+      console.error("[threads/analyze] Claude failed, falling back to GPT-5.4:", (claudeErr as Error).message);
+      const { callOpenAI } = await import("@/lib/llm/openai");
+      modelUsed = "gpt-5.4";
+      result = await callOpenAI({ model: "gpt-5.4", maxTokens: 2000, systemPrompt: sysPrompt, userMessage: prompt });
+    }
 
     // Parse the analysis
     const analysis = parseAnalysis(result.text);
@@ -111,7 +117,7 @@ export async function POST(request: NextRequest) {
     if (insertError) throw insertError;
 
     // Deduct credits
-    const deductResult = await deductCredits(user.id, "thread_analysis", totalTokens, "claude-sonnet-4-20250514", threadAnalysis.id);
+    const deductResult = await deductCredits(user.id, "thread_analysis", totalTokens, modelUsed, threadAnalysis.id);
 
     return NextResponse.json({
       analysis: threadAnalysis,
