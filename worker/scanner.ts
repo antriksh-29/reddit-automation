@@ -248,7 +248,8 @@ async function getEligibleUsers(subName: string): Promise<EligibleUser[]> {
           id,
           email,
           plan_tier,
-          trial_ends_at
+          trial_ends_at,
+          notification_preferences
         )
       )
     `
@@ -273,7 +274,7 @@ async function getEligibleUsers(subName: string): Promise<EligibleUser[]> {
         icp_description: string;
         keywords: { primary: string[]; discovery: string[] };
         embedding_vectors: number[] | null;
-        users: { id: string; email: string; plan_tier: string; trial_ends_at: string | null };
+        users: { id: string; email: string; plan_tier: string; trial_ends_at: string | null; notification_preferences: { email_enabled: boolean; email_priorities: string[] } | null };
       };
       const user = business.users;
 
@@ -292,7 +293,7 @@ async function getEligibleUsers(subName: string): Promise<EligibleUser[]> {
         icp_description: string;
         keywords: { primary: string[]; discovery: string[] };
         embedding_vectors: number[] | null;
-        users: { id: string; email: string; plan_tier: string; trial_ends_at: string | null };
+        users: { id: string; email: string; plan_tier: string; trial_ends_at: string | null; notification_preferences: { email_enabled: boolean; email_priorities: string[] } | null };
       };
 
       // Get competitors for this business
@@ -306,6 +307,7 @@ async function getEligibleUsers(subName: string): Promise<EligibleUser[]> {
         competitors: [], // Will be fetched separately
         embedding_vectors: business.embedding_vectors,
         subreddit_id: row.id,
+        notification_preferences: business.users.notification_preferences,
       };
     });
 }
@@ -373,7 +375,9 @@ async function scoreAndAlert(
     priority_level: priority.level,
     priority_factors: priority.factors,
     category,
-    email_status: (priority.level === "high" || priority.level === "medium") ? "pending" : "skipped",
+    email_status: (user.notification_preferences || { email_enabled: true, email_priorities: ["high", "medium"] }).email_enabled &&
+      (user.notification_preferences || { email_enabled: true, email_priorities: ["high", "medium"] }).email_priorities.includes(priority.level)
+      ? "pending" : "skipped",
   });
 
   if (alertError) {
@@ -390,8 +394,11 @@ async function scoreAndAlert(
       `→ ${priority.level} (${priority.score}) [${category}]`
   );
 
-  // Send email for high and medium priority alerts
-  if (priority.level === "high" || priority.level === "medium") {
+  // Send email based on user's notification preferences
+  const notifPrefs = user.notification_preferences || { email_enabled: true, email_priorities: ["high", "medium"] };
+  const shouldEmail = notifPrefs.email_enabled && notifPrefs.email_priorities.includes(priority.level);
+
+  if (shouldEmail) {
     const minutesAgo = Math.floor((Date.now() - post.created_utc * 1000) / 60000);
     const timeAgo = minutesAgo < 60 ? `${minutesAgo}m ago` : `${Math.floor(minutesAgo / 60)}h ago`;
 

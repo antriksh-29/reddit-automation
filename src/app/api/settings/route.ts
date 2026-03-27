@@ -17,7 +17,7 @@ export async function GET() {
 
   const { data: userData } = await admin
     .from("users")
-    .select("plan_tier, trial_started_at, trial_ends_at")
+    .select("plan_tier, trial_started_at, trial_ends_at, notification_preferences")
     .eq("id", user.id)
     .single();
 
@@ -147,6 +147,21 @@ export async function PATCH(request: NextRequest) {
       .from("monitored_subreddits")
       .update({ is_active: false })
       .eq("id", subreddit_id);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true });
+  }
+
+  if (body.section === "notifications") {
+    const { email_enabled, email_priorities } = body;
+    const { error } = await admin
+      .from("users")
+      .update({
+        notification_preferences: {
+          email_enabled: email_enabled ?? true,
+          email_priorities: email_priorities || ["high", "medium"],
+        },
+      })
+      .eq("id", user.id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true });
   }

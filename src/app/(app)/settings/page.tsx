@@ -38,6 +38,38 @@ export default function SettingsPage() {
   const [credits, setCredits] = useState<CreditData | null>(null);
   const [showFeatures, setShowFeatures] = useState(false);
   const [newCompetitor, setNewCompetitor] = useState("");
+
+  // Notification settings (must be at top level — not inside conditional JSX)
+  const [emailEnabled, setEmailEnabled] = useState(true);
+  const [emailPriorities, setEmailPriorities] = useState<Set<string>>(new Set(["high", "medium"]));
+  const [notifSaving, setNotifSaving] = useState(false);
+  const [notifMsg, setNotifMsg] = useState<string | null>(null);
+
+  function togglePriority(level: string) {
+    setEmailPriorities((prev) => {
+      const next = new Set(prev);
+      if (next.has(level)) next.delete(level);
+      else next.add(level);
+      return next;
+    });
+  }
+
+  async function saveNotifications() {
+    setNotifSaving(true);
+    setNotifMsg(null);
+    const res = await fetch("/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        section: "notifications",
+        email_enabled: emailEnabled,
+        email_priorities: Array.from(emailPriorities),
+      }),
+    });
+    setNotifSaving(false);
+    setNotifMsg(res.ok ? "Saved" : "Failed to save");
+    setTimeout(() => setNotifMsg(null), 2000);
+  }
   const [newSubreddit, setNewSubreddit] = useState("");
   const [newKeyword, setNewKeyword] = useState("");
   const [validating, setValidating] = useState(false);
@@ -60,6 +92,13 @@ export default function SettingsPage() {
       setCompetitors(data.competitors);
       setSubreddits(data.subreddits);
       setCredits(data.credits);
+
+      // Load notification preferences
+      const notifPrefs = data.user?.notification_preferences;
+      if (notifPrefs) {
+        setEmailEnabled(notifPrefs.email_enabled ?? true);
+        setEmailPriorities(new Set(notifPrefs.email_priorities || ["high", "medium"]));
+      }
     }
     setLoading(false);
   }
@@ -465,26 +504,7 @@ export default function SettingsPage() {
         )}
 
         {/* Notifications Tab */}
-        {activeTab === "Notifications" && (() => {
-          const [emailEnabled, setEmailEnabled] = useState(true);
-          const [threshold, setThreshold] = useState("high_medium");
-          const [notifSaving, setNotifSaving] = useState(false);
-          const [notifMsg, setNotifMsg] = useState<string | null>(null);
-
-          async function saveNotifications() {
-            setNotifSaving(true);
-            setNotifMsg(null);
-            const res = await fetch("/api/settings", {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ section: "notifications", email_enabled: emailEnabled, alert_threshold: threshold }),
-            });
-            setNotifSaving(false);
-            setNotifMsg(res.ok ? "Saved" : "Failed to save");
-            setTimeout(() => setNotifMsg(null), 2000);
-          }
-
-          return (
+        {activeTab === "Notifications" && (
             <div>
               <h2 style={{ fontFamily: "'Satoshi', system-ui, sans-serif", fontSize: "20px", fontWeight: 700, color: "#F5F5F3", marginBottom: "24px" }}>
                 Notifications
@@ -513,42 +533,46 @@ export default function SettingsPage() {
                   </button>
                 </div>
 
-                {/* Threshold */}
+                {/* Priority levels — multi-select */}
                 {emailEnabled && (
                   <div>
-                    <div style={{ fontSize: "14px", fontWeight: 500, color: "#F5F5F3", marginBottom: "8px" }}>Alert Threshold</div>
+                    <div style={{ fontSize: "14px", fontWeight: 500, color: "#F5F5F3", marginBottom: "4px" }}>Send emails for</div>
+                    <div style={{ fontSize: "12px", color: "#A3A3A0", marginBottom: "12px" }}>Select which priority levels trigger email notifications</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                       {[
-                        { key: "all", label: "All alerts", desc: "High + Medium + Low priority" },
-                        { key: "high_medium", label: "High + Medium only", desc: "Recommended — filters out noise" },
-                        { key: "high_only", label: "High priority only", desc: "Only the most important alerts" },
-                      ].map((opt) => (
-                        <button
-                          key={opt.key}
-                          onClick={() => setThreshold(opt.key)}
-                          style={{
-                            display: "flex", alignItems: "center", gap: "12px",
-                            padding: "12px 14px", borderRadius: "8px",
-                            border: `1px solid ${threshold === opt.key ? "#E8651A" : "#2A2A2A"}`,
-                            backgroundColor: threshold === opt.key ? "rgba(232, 101, 26, 0.08)" : "transparent",
-                            cursor: "pointer", textAlign: "left",
-                          }}
-                        >
-                          <span style={{
-                            width: "16px", height: "16px", borderRadius: "50%",
-                            border: `2px solid ${threshold === opt.key ? "#E8651A" : "#555"}`,
-                            backgroundColor: threshold === opt.key ? "#E8651A" : "transparent",
-                            display: "inline-flex", alignItems: "center", justifyContent: "center",
-                            flexShrink: 0,
-                          }}>
-                            {threshold === opt.key && <span style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: "#FFF" }} />}
-                          </span>
-                          <div>
-                            <div style={{ fontSize: "14px", fontWeight: 500, color: "#F5F5F3" }}>{opt.label}</div>
-                            <div style={{ fontSize: "12px", color: "#A3A3A0" }}>{opt.desc}</div>
-                          </div>
-                        </button>
-                      ))}
+                        { key: "high", label: "High priority", color: "#EF4444" },
+                        { key: "medium", label: "Medium priority", color: "#F59E0B" },
+                        { key: "low", label: "Low priority", color: "#6B6B68" },
+                      ].map((opt) => {
+                        const active = emailPriorities.has(opt.key);
+                        return (
+                          <button
+                            key={opt.key}
+                            onClick={() => togglePriority(opt.key)}
+                            style={{
+                              display: "flex", alignItems: "center", gap: "12px",
+                              padding: "12px 14px", borderRadius: "8px",
+                              border: `1px solid ${active ? "#E8651A" : "#2A2A2A"}`,
+                              backgroundColor: active ? "rgba(232, 101, 26, 0.08)" : "transparent",
+                              cursor: "pointer", textAlign: "left",
+                            }}
+                          >
+                            <span style={{
+                              width: "16px", height: "16px", borderRadius: "3px",
+                              border: active ? "none" : "1.5px solid #555",
+                              backgroundColor: active ? "#E8651A" : "transparent",
+                              display: "inline-flex", alignItems: "center", justifyContent: "center",
+                              flexShrink: 0, fontSize: "11px", color: "#FFF",
+                            }}>
+                              {active ? "✓" : ""}
+                            </span>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                              <span style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: opt.color, flexShrink: 0 }} />
+                              <span style={{ fontSize: "14px", fontWeight: 500, color: "#F5F5F3" }}>{opt.label}</span>
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -563,8 +587,7 @@ export default function SettingsPage() {
               </button>
               {notifMsg && <span style={{ marginLeft: "12px", fontSize: "13px", color: notifMsg === "Saved" ? "#22C55E" : "#EF4444" }}>{notifMsg}</span>}
             </div>
-          );
-        })()}
+        )}
 
         {/* Usage & Billing Tab */}
         {activeTab === "Usage & Billing" && (() => {
