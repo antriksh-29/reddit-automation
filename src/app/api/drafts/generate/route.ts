@@ -68,41 +68,107 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const prompt = `Generate 2 Reddit comment drafts for the following post. Each draft should have a different tone.
+    const prompt = `Generate 2 Reddit comment drafts for the following post. Each draft should use a completely different approach.
 
 POST CONTEXT:
 - Subreddit: r/${subredditName}
 - Title: ${alert.post_title}
 - Body: ${(alert.post_body || "").slice(0, 1500)}
-- Category: ${alert.category}
+- Post category: ${alert.category}
 
 SUBREDDIT RULES:
 ${rules}
 
-BUSINESS CONTEXT:
+BUSINESS CONTEXT (for your awareness — do NOT mention the business name or link in the drafts):
 - Business: ${business.name} — ${business.description?.slice(0, 300)}
 - Target audience: ${business.icp_description?.slice(0, 200)}
 
-REQUIREMENTS:
-1. Sound genuinely human — like a real Reddit user who happens to know about this space
-2. Follow the subreddit rules strictly — avoid direct self-promotion
-3. Provide real value first — share genuine insight, ask thoughtful questions, or offer help
-4. Only mention the business naturally if it fits the conversation — never force it
-5. Match the tone and language style of the subreddit
-6. Keep each draft under 200 words
+═══════════════════════════════════════════════════
+CORE PHILOSOPHY: VALUE-FIRST, NEVER SELL
+═══════════════════════════════════════════════════
+
+The goal is to write comments that make the reader think "this person really knows what they're talking about" — NOT "this person is trying to sell me something."
+
+COMMENT STRUCTURE RULES:
+
+1. HOOK WITH THE PROBLEM — Start by acknowledging a specific pain point the OP mentioned. Show you actually read their post. Reference their exact words or situation.
+
+2. SPEAK FROM EXPERIENCE — Write as someone who has personally dealt with this. Use first-person: "I ran into this exact thing when...", "What worked for us was...", "I wasted 3 months on X before realizing..."
+
+3. SHARE A FRAMEWORK OR ACTIONABLE STEPS — Give a concrete 3-5 step approach, a checklist, a mental model, or a specific metric/number from real experience. Not vague advice. Real specifics anyone can apply.
+
+4. PROVIDE PROOF — Include a specific metric, result, screenshot reference, or before/after: "went from 2% to 11% conversion", "cut our deploy time from 45 min to 3 min", "reduced churn by 30% in one quarter"
+
+5. END WITH A GENUINE QUESTION OR NUDGE — Close with something that invites conversation. Either ask a real follow-up question about their situation, or end with a thought-provoking point. This draws people in.
+
+6. ZERO SELF-PROMOTION — No product links. No business name. No "check out my tool." No "I built something for this." Reddit kills these instantly. The business context is ONLY so you can speak authentically about the domain.
+
+WHAT MAKES A COMMENT FEEL HUMAN (study these patterns):
+
+- Use casual connectors: "honestly", "the thing is", "what actually worked was", "I kinda stumbled into"
+- Show vulnerability: admit mistakes, share what didn't work, be honest about limitations
+- Use Reddit-native formatting: short paragraphs, occasional line breaks, maybe a bullet list for steps
+- Match the subreddit's energy — some subs love jokes and memes, others stick to facts and deep discussion. Check the vibe.
+- Throw in a quick personal anecdote or a joke if it fits. It makes the reply feel yours.
+- Avoid corporate language: no "leverage", "utilize", "solution", "platform", "empower", "streamline"
+- Avoid one-word or low-effort responses
+- A good reply starts by noting what the OP said, then adds real help or a smart point. End with a nudge — like asking a question. This draws people in.
+
+WHAT TO ABSOLUTELY AVOID:
+
+- Leading with product links in every comment
+- Generic advice that could apply to any post ("focus on your users!")
+- Pretending to be a customer of your own product
+- Replies that don't match the post — check context before writing
+- Arguing with other commenters or being rude
+- Excessive low-effort, one-word replies or spam
+
+EXAMPLE OF A GREAT REDDIT COMMENT (for reference):
+"""
+I stopped thinking in terms of "channels" and just chased specific people with the exact problem I solved. I started by writing down 3 super-specific pains my product fixed. Then I searched Reddit and X for people literally complaining about those things, replied with actual fixes, and only mentioned my tool if they asked how I was doing it. Same on Slack communities and niche forums. It felt slow and small, but those first 50 users were crazy engaged and kept talking. What surprised me: live "fix this with you" calls. I'd DM: "Got 20 mins? I'll set it up for you and we'll see if it helps." Half said yes, and those calls turned into referrals.
+"""
+
+Notice: personal story, specific actions, real numbers, no links, conversational tone, genuine helpfulness.
+
+ANOTHER EXAMPLE:
+"""
+the customer concentration point is huge. i never thought about it until someone pointed out that acquirers basically see it as risk concentration. 42% in your top 5 is a tough spot because if even one churns, the whole revenue story changes overnight.
+
+curious about the founder dependency part. how long did it take you to actually reduce it once you started the process?
+"""
+
+Notice: acknowledges OP's specific point, adds unique insight with a number, asks genuine follow-up question, lowercase casual tone.
+
+═══════════════════════════════════════════════════
+
+Generate exactly 2 drafts with DIFFERENT approaches:
+
+Draft 1 — "Story & Experience": Lead with a personal story or anecdote related to the topic. Share what you tried, what failed, what worked. Feel like a peer sharing war stories.
+
+Draft 2 — "Framework & Tactical": Lead with a specific framework, checklist, or step-by-step approach. More structured, but still conversational. Feel like the smartest person in the thread dropping actionable knowledge.
+
+Keep each draft between 80-200 words. Short is fine — a punchy 80-word comment with real insight beats a 200-word wall of generic advice.
 
 Return a JSON array with exactly 2 drafts:
 [
-  { "tone": "Helpful & Conversational", "text": "..." },
-  { "tone": "Technical & Detailed", "text": "..." }
+  { "tone": "Story & Experience", "text": "..." },
+  { "tone": "Framework & Tactical", "text": "..." }
 ]
 
 Return ONLY the JSON array, no other text.`;
 
     const result = await callClaude({
       model: "claude-sonnet-4-20250514",
-      maxTokens: 1500,
-      systemPrompt: "You are an expert Reddit user who writes authentic, helpful comments. Never write obviously promotional content. Always return valid JSON.",
+      maxTokens: 2000,
+      systemPrompt: `You are a real Reddit power user — someone who has been on Reddit for years, participates genuinely in communities, and has deep domain expertise. You write comments that get upvoted because they're genuinely helpful, not because they're promotional.
+
+Your comments sound like they come from a person with real experience, not a marketing team. You use casual language, admit when things are complicated, share specific numbers from real experience, and ask thoughtful questions.
+
+You NEVER mention any business, product, or tool by name unless the OP specifically asked for recommendations. Even then, you mention it as "one option among others" — never the hero.
+
+Reddit is not where deals close. It's where trust begins. Off-platform assets like a checklist, comparison guide, case study, or how-to resource is where value lives — but only share these if genuinely relevant and asked for.
+
+Always return valid JSON.`,
       userMessage: prompt,
     });
 
@@ -181,20 +247,37 @@ export async function PATCH(request: NextRequest) {
   const sub = (alert.monitored_subreddits as { subreddit_name: string })?.subreddit_name || "unknown";
 
   try {
-    const prompt = `Regenerate this Reddit comment draft with a "${existingDraft.tone}" tone.
+    const toneGuide = existingDraft.tone?.includes("Story") || existingDraft.tone?.includes("Experience")
+      ? "Lead with a personal story or anecdote. Share what you tried, what failed, what worked. Feel like a peer sharing war stories over coffee."
+      : "Lead with a specific framework, checklist, or step-by-step approach. Structured but still conversational. Feel like the smartest person in the thread dropping actionable knowledge.";
 
-Post: ${alert.post_title}
-Body: ${(alert.post_body as string || "").slice(0, 500)}
-Subreddit: r/${sub}
+    const prompt = `Regenerate this Reddit comment for a post in r/${sub}.
 
-Write a new version that's different from: "${existingDraft.draft_text.slice(0, 200)}"
+POST:
+Title: ${alert.post_title}
+Body: ${(alert.post_body as string || "").slice(0, 800)}
 
-Keep it under 200 words. Sound human. Follow subreddit norms. Return ONLY the comment text, no JSON.`;
+TONE: ${existingDraft.tone}
+${toneGuide}
+
+PREVIOUS VERSION (write something DIFFERENT — new angle, new anecdote, new approach):
+"${existingDraft.draft_text.slice(0, 300)}"
+
+RULES:
+- Hook with the OP's specific problem. Show you read their post.
+- Speak from personal experience: "I ran into this...", "What worked for us..."
+- Include at least one specific number, metric, or concrete detail
+- End with a genuine question or thought-provoking point
+- NO product mentions, NO links, NO self-promotion
+- Use casual Reddit tone: "honestly", "the thing is", "kinda", "ngl"
+- Keep between 80-200 words. Punchy > long.
+
+Return ONLY the comment text. No JSON, no quotes, no meta-commentary.`;
 
     const result = await callClaude({
       model: "claude-sonnet-4-20250514",
-      maxTokens: 500,
-      systemPrompt: "You are an expert Reddit user. Write authentic, helpful comments. Return only the comment text.",
+      maxTokens: 600,
+      systemPrompt: "You are a real Reddit power user with years of genuine community participation. Write comments that get upvoted because they're helpful, specific, and human — not promotional. Return only the comment text.",
       userMessage: prompt,
     });
 
