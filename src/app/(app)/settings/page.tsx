@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 /**
  * Settings — sidebar tabs: Business Profile, Notifications, Usage & Billing.
@@ -16,8 +16,9 @@ interface BusinessData {
 }
 
 interface Competitor { id: string; name: string; }
-interface Subreddit { id: string; subreddit_name: string; status: string; }
-interface UserData { email: string; plan_tier: string; trial_ends_at: string | null; }
+interface SubredditItem { id: string; subreddit_name: string; status: string; }
+interface UserData { email: string; plan_tier: string; trial_started_at: string | null; trial_ends_at: string | null; }
+interface CreditData { balance: number; lifetime_used: number; last_reset_at: string | null; }
 
 const TABS = ["Business Profile", "Notifications", "Usage & Billing"] as const;
 
@@ -32,12 +33,16 @@ export default function SettingsPage() {
   const [userData, setUserData] = useState<UserData | null>(null);
   const [business, setBusiness] = useState<BusinessData | null>(null);
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
-  const [subreddits, setSubreddits] = useState<Subreddit[]>([]);
+  const [subreddits, setSubreddits] = useState<SubredditItem[]>([]);
 
+  const [credits, setCredits] = useState<CreditData | null>(null);
+  const [showFeatures, setShowFeatures] = useState(false);
   const [newCompetitor, setNewCompetitor] = useState("");
   const [newSubreddit, setNewSubreddit] = useState("");
   const [newKeyword, setNewKeyword] = useState("");
   const [validating, setValidating] = useState(false);
+  const [addingCompetitor, setAddingCompetitor] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
   const [inlineError, setInlineError] = useState<string | null>(null);
 
   const descRef = useRef<HTMLTextAreaElement>(null);
@@ -54,18 +59,28 @@ export default function SettingsPage() {
       setBusiness(data.business);
       setCompetitors(data.competitors);
       setSubreddits(data.subreddits);
+      setCredits(data.credits);
     }
     setLoading(false);
   }
 
-  function autoResize(ref: React.RefObject<HTMLTextAreaElement | null>) {
+  // Auto-resize textareas on content change
+  const autoResize = useCallback((ref: React.RefObject<HTMLTextAreaElement | null>) => {
     if (ref.current) {
       ref.current.style.height = "auto";
       ref.current.style.height = ref.current.scrollHeight + "px";
     }
-  }
+  }, []);
 
-  useEffect(() => { autoResize(descRef); autoResize(icpRef); }, [business]);
+  // Run auto-resize after initial data load
+  useEffect(() => {
+    // Small delay to ensure DOM is rendered
+    const timer = setTimeout(() => {
+      autoResize(descRef);
+      autoResize(icpRef);
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [business, loading, autoResize]);
 
   async function saveProfile() {
     if (!business) return;
@@ -81,29 +96,66 @@ export default function SettingsPage() {
     setTimeout(() => setSaveMsg(null), 2000);
   }
 
+  // Optimistic add competitor — update UI immediately, API in background
   async function addCompetitor() {
     const name = newCompetitor.trim();
     if (!name || competitors.length >= 10) return;
+    if (competitors.some(c => c.name.toLowerCase() === name.toLowerCase())) {
+      setInlineError("This competitor is already added.");
+      return;
+    }
+
+    setAddingCompetitor(true);
+    setNewCompetitor("");
+    setInlineError(null);
+
+    // Optimistic: add to UI immediately with temp ID
+    const tempId = `temp-${Date.now()}`;
+    setCompetitors(prev => [...prev, { id: tempId, name }]);
+
     const res = await fetch("/api/settings", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ section: "add_competitor", name }),
     });
+
     if (res.ok) {
-      setNewCompetitor("");
-      fetchSettings();
+      // Replace temp with real data
+      const data = await res.json();
+      if (data.competitor) {
+        setCompetitors(prev => prev.map(c => c.id === tempId ? { id: data.competitor.id, name } : c));
+      } else {
+        // Fetch to get real ID
+        fetchSettings();
+      }
+    } else {
+      // Rollback
+      setCompetitors(prev => prev.filter(c => c.id !== tempId));
+      setInlineError("Failed to add competitor.");
     }
+    setAddingCompetitor(false);
   }
 
+  // Optimistic remove competitor
   async function removeCompetitor(id: string) {
-    await fetch("/api/settings", {
+    setRemovingId(id);
+    const removed = competitors.find(c => c.id === id);
+    setCompetitors(prev => prev.filter(c => c.id !== id));
+
+    const res = await fetch("/api/settings", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ section: "remove_competitor", competitor_id: id }),
     });
-    fetchSettings();
+
+    if (!res.ok && removed) {
+      // Rollback on failure
+      setCompetitors(prev => [...prev, removed]);
+    }
+    setRemovingId(null);
   }
 
+  // Add subreddit with validation
   async function addSubreddit() {
     const name = newSubreddit.trim().replace(/^r\//, "").toLowerCase();
     if (!name) return;
@@ -114,49 +166,83 @@ export default function SettingsPage() {
       return;
     }
 
+    if (subreddits.some(s => s.subreddit_name.toLowerCase() === name)) {
+      setInlineError("This subreddit is already added.");
+      return;
+    }
+
     setValidating(true);
     setInlineError(null);
 
-    const valRes = await fetch("/api/subreddits/validate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    const valData = await valRes.json();
+    try {
+      const valRes = await fetch("/api/subreddits/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const valData = await valRes.json();
 
-    if (!valData.valid) {
-      setInlineError(valData.reason);
+      if (!valData.valid) {
+        setInlineError(valData.reason);
+        setValidating(false);
+        return;
+      }
+
+      const subredditName = valData.subreddit.name;
+
+      // Optimistic add
+      const tempId = `temp-${Date.now()}`;
+      setSubreddits(prev => [...prev, { id: tempId, subreddit_name: subredditName, status: "active" }]);
+      setNewSubreddit("");
+
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ section: "add_subreddit", name: subredditName }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.subreddit) {
+          setSubreddits(prev => prev.map(s => s.id === tempId ? { ...s, id: data.subreddit.id } : s));
+        } else {
+          fetchSettings();
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setSubreddits(prev => prev.filter(s => s.id !== tempId));
+        setInlineError(errData.error || "Failed to add subreddit.");
+      }
+    } catch {
+      setInlineError("Could not validate subreddit. Please try again.");
+    } finally {
       setValidating(false);
-      return;
     }
+  }
+
+  // Optimistic remove subreddit
+  async function removeSubreddit(id: string) {
+    setRemovingId(id);
+    const removed = subreddits.find(s => s.id === id);
+    setSubreddits(prev => prev.filter(s => s.id !== id));
 
     const res = await fetch("/api/settings", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ section: "add_subreddit", name: valData.subreddit.name }),
-    });
-
-    setValidating(false);
-    if (res.ok) {
-      setNewSubreddit("");
-      setInlineError(null);
-      fetchSettings();
-    }
-  }
-
-  async function removeSubreddit(id: string) {
-    await fetch("/api/settings", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ section: "remove_subreddit", subreddit_id: id }),
     });
-    fetchSettings();
+
+    if (!res.ok && removed) {
+      setSubreddits(prev => [...prev, removed]);
+    }
+    setRemovingId(null);
   }
 
   function addKeyword() {
     if (!business || !newKeyword.trim()) return;
     const allKws = [...(business.keywords?.primary || []), ...(business.keywords?.discovery || [])];
     if (allKws.length >= 15) return;
+    if (allKws.includes(newKeyword.trim())) return;
     setBusiness({
       ...business,
       keywords: {
@@ -192,6 +278,13 @@ export default function SettingsPage() {
     display: "inline-flex", alignItems: "center", gap: "6px",
     backgroundColor: "#1C1C1C", border: "1px solid #2A2A2A", borderRadius: "6px",
     padding: "4px 10px", fontSize: "13px", color: "#F5F5F3",
+  };
+
+  const addBtnStyle: React.CSSProperties = {
+    padding: "10px 16px", fontSize: "13px", borderRadius: "8px",
+    border: "1px solid #2A2A2A", backgroundColor: "transparent",
+    color: "#A3A3A0", cursor: "pointer", whiteSpace: "nowrap",
+    fontFamily: "'DM Sans', system-ui, sans-serif",
   };
 
   if (loading) {
@@ -244,11 +337,21 @@ export default function SettingsPage() {
               </div>
               <div>
                 <label style={labelStyle}>Description</label>
-                <textarea ref={descRef} value={business.description || ""} onChange={(e) => { setBusiness({ ...business, description: e.target.value }); autoResize(descRef); }} style={{ ...inputStyle, resize: "none", overflow: "hidden", minHeight: "60px" }} />
+                <textarea
+                  ref={descRef}
+                  value={business.description || ""}
+                  onChange={(e) => { setBusiness({ ...business, description: e.target.value }); setTimeout(() => autoResize(descRef), 0); }}
+                  style={{ ...inputStyle, resize: "vertical", overflow: "auto", minHeight: "100px" }}
+                />
               </div>
               <div>
                 <label style={labelStyle}>Target Audience / ICP</label>
-                <textarea ref={icpRef} value={business.icp_description || ""} onChange={(e) => { setBusiness({ ...business, icp_description: e.target.value }); autoResize(icpRef); }} style={{ ...inputStyle, resize: "none", overflow: "hidden", minHeight: "60px" }} />
+                <textarea
+                  ref={icpRef}
+                  value={business.icp_description || ""}
+                  onChange={(e) => { setBusiness({ ...business, icp_description: e.target.value }); setTimeout(() => autoResize(icpRef), 0); }}
+                  style={{ ...inputStyle, resize: "vertical", overflow: "auto", minHeight: "100px" }}
+                />
               </div>
             </div>
 
@@ -266,7 +369,7 @@ export default function SettingsPage() {
               {((business.keywords?.primary?.length || 0) + (business.keywords?.discovery?.length || 0)) < 15 && (
                 <div style={{ display: "flex", gap: "8px" }}>
                   <input value={newKeyword} onChange={(e) => setNewKeyword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addKeyword()} style={inputStyle} placeholder="Add keyword..." />
-                  <button onClick={addKeyword} style={{ padding: "10px 16px", fontSize: "13px", borderRadius: "8px", border: "1px solid #2A2A2A", backgroundColor: "transparent", color: "#A3A3A0", cursor: "pointer", whiteSpace: "nowrap", fontFamily: "'DM Sans', system-ui, sans-serif" }}>+ Add</button>
+                  <button onClick={addKeyword} style={addBtnStyle}>+ Add</button>
                 </div>
               )}
             </div>
@@ -276,13 +379,29 @@ export default function SettingsPage() {
               <label style={labelStyle}>Competitors ({competitors.length}/10)</label>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "8px" }}>
                 {competitors.map((c) => (
-                  <span key={c.id} style={tagStyle}>{c.name}<button onClick={() => removeCompetitor(c.id)} style={{ background: "none", border: "none", color: "#6B6B68", cursor: "pointer", fontSize: "14px", padding: 0 }}>×</button></span>
+                  <span key={c.id} style={{ ...tagStyle, opacity: removingId === c.id ? 0.4 : 1, transition: "opacity 150ms" }}>
+                    {c.name}
+                    <button
+                      onClick={() => removeCompetitor(c.id)}
+                      disabled={removingId === c.id}
+                      style={{ background: "none", border: "none", color: "#6B6B68", cursor: "pointer", fontSize: "14px", padding: 0 }}
+                    >×</button>
+                  </span>
                 ))}
               </div>
               {competitors.length < 10 && (
                 <div style={{ display: "flex", gap: "8px" }}>
-                  <input value={newCompetitor} onChange={(e) => setNewCompetitor(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCompetitor()} style={inputStyle} placeholder="Add competitor..." />
-                  <button onClick={addCompetitor} style={{ padding: "10px 16px", fontSize: "13px", borderRadius: "8px", border: "1px solid #2A2A2A", backgroundColor: "transparent", color: "#A3A3A0", cursor: "pointer", whiteSpace: "nowrap", fontFamily: "'DM Sans', system-ui, sans-serif" }}>+ Add</button>
+                  <input
+                    value={newCompetitor}
+                    onChange={(e) => setNewCompetitor(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && addCompetitor()}
+                    style={inputStyle}
+                    placeholder="Add competitor..."
+                    disabled={addingCompetitor}
+                  />
+                  <button onClick={addCompetitor} disabled={addingCompetitor} style={{ ...addBtnStyle, opacity: addingCompetitor ? 0.5 : 1 }}>
+                    {addingCompetitor ? "Adding..." : "+ Add"}
+                  </button>
                 </div>
               )}
             </div>
@@ -292,9 +411,15 @@ export default function SettingsPage() {
               <label style={labelStyle}>Subreddits ({subreddits.length}/{userData?.plan_tier === "growth" || userData?.plan_tier === "custom" ? 10 : 3})</label>
               <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "8px" }}>
                 {subreddits.map((s) => (
-                  <div key={s.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", backgroundColor: "#141414", border: "1px solid #2A2A2A", borderRadius: "8px" }}>
+                  <div key={s.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", backgroundColor: "#141414", border: "1px solid #2A2A2A", borderRadius: "8px", opacity: removingId === s.id ? 0.4 : 1, transition: "opacity 150ms" }}>
                     <span style={{ fontSize: "14px", color: "#F5F5F3" }}>r/{s.subreddit_name}</span>
-                    <button onClick={() => removeSubreddit(s.id)} style={{ background: "none", border: "none", color: "#6B6B68", cursor: "pointer", fontSize: "16px" }}>×</button>
+                    <button
+                      onClick={() => removeSubreddit(s.id)}
+                      disabled={removingId === s.id}
+                      style={{ background: "none", border: "none", color: "#6B6B68", cursor: "pointer", fontSize: "16px" }}
+                      onMouseEnter={(e) => { e.currentTarget.style.color = "#EF4444"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.color = "#6B6B68"; }}
+                    >×</button>
                   </div>
                 ))}
               </div>
@@ -302,9 +427,23 @@ export default function SettingsPage() {
                 <div style={{ display: "flex", gap: "8px" }}>
                   <div style={{ position: "relative", flex: 1 }}>
                     <span style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: "#6B6B68", fontSize: "14px" }}>r/</span>
-                    <input value={newSubreddit} onChange={(e) => setNewSubreddit(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addSubreddit()} style={{ ...inputStyle, paddingLeft: "30px" }} placeholder="subreddit name" disabled={validating} />
+                    <input
+                      value={newSubreddit}
+                      onChange={(e) => setNewSubreddit(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && addSubreddit()}
+                      style={{ ...inputStyle, paddingLeft: "30px" }}
+                      placeholder="subreddit name"
+                      disabled={validating}
+                    />
+                    {validating && (
+                      <div style={{ position: "absolute", right: "14px", top: "0", bottom: "0", display: "flex", alignItems: "center" }}>
+                        <div style={{ width: "16px", height: "16px", border: "2px solid #2A2A2A", borderTopColor: "#E8651A", borderRadius: "50%", animation: "spin 0.6s linear infinite" }} />
+                      </div>
+                    )}
                   </div>
-                  <button onClick={addSubreddit} disabled={validating} style={{ padding: "10px 16px", fontSize: "13px", borderRadius: "8px", border: "1px solid #2A2A2A", backgroundColor: "transparent", color: "#A3A3A0", cursor: "pointer", whiteSpace: "nowrap", opacity: validating ? 0.5 : 1, fontFamily: "'DM Sans', system-ui, sans-serif" }}>+ Add</button>
+                  <button onClick={addSubreddit} disabled={validating} style={{ ...addBtnStyle, opacity: validating ? 0.5 : 1 }}>
+                    {validating ? "Checking..." : "+ Add"}
+                  </button>
                 </div>
               )}
               {inlineError && (
@@ -340,28 +479,158 @@ export default function SettingsPage() {
         )}
 
         {/* Usage & Billing Tab */}
-        {activeTab === "Usage & Billing" && (
-          <div>
-            <h2 style={{ fontFamily: "'Satoshi', system-ui, sans-serif", fontSize: "20px", fontWeight: 700, color: "#F5F5F3", marginBottom: "24px" }}>
-              Usage & Billing
-            </h2>
-            <div style={{ backgroundColor: "#141414", border: "1px solid #2A2A2A", borderRadius: "8px", padding: "16px" }}>
-              <div style={{ marginBottom: "12px" }}>
-                <span style={{ fontSize: "13px", color: "#A3A3A0" }}>Plan: </span>
-                <span style={{ fontSize: "14px", fontWeight: 600, color: "#F5F5F3", textTransform: "capitalize" }}>{userData?.plan_tier || "free"}</span>
-              </div>
-              {userData?.trial_ends_at && (
-                <div style={{ marginBottom: "12px" }}>
-                  <span style={{ fontSize: "13px", color: "#A3A3A0" }}>Trial ends: </span>
-                  <span style={{ fontSize: "14px", color: "#F5F5F3" }}>{new Date(userData.trial_ends_at).toLocaleDateString()}</span>
+        {activeTab === "Usage & Billing" && (() => {
+          const tier = userData?.plan_tier || "free";
+          const isFree = tier === "free";
+          const isGrowth = tier === "growth";
+
+          const totalCredits = isFree ? 25 : isGrowth ? 250 : 500;
+          const balance = credits?.balance ?? 0;
+          const used = credits?.lifetime_used ?? 0;
+          const consumedPercent = totalCredits > 0 ? Math.min(100, Math.round((used / totalCredits) * 100)) : 0;
+
+          // Progress bar color based on consumption
+          const barColor = consumedPercent >= 90 ? "#EF4444" : consumedPercent >= 70 ? "#F59E0B" : "#E8651A";
+
+          // Format trial expiry with exact date + time in GMT
+          function formatTrialExpiry(dateStr: string | null): string {
+            if (!dateStr) return "—";
+            const d = new Date(dateStr);
+            return d.toLocaleString("en-US", {
+              month: "short", day: "numeric", year: "numeric",
+              hour: "numeric", minute: "2-digit", hour12: true, timeZone: "UTC",
+            }) + " GMT";
+          }
+
+          return (
+            <div>
+              <h2 style={{ fontFamily: "'Satoshi', system-ui, sans-serif", fontSize: "20px", fontWeight: 700, color: "#F5F5F3", marginBottom: "24px" }}>
+                Usage & Billing
+              </h2>
+
+              {/* Plan Type */}
+              <div style={{ backgroundColor: "#141414", border: "1px solid #2A2A2A", borderRadius: "12px", padding: "20px", marginBottom: "16px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+                  <div>
+                    <span style={{ fontSize: "13px", color: "#A3A3A0" }}>Current Plan</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "4px" }}>
+                      <span style={{ fontSize: "22px", fontWeight: 700, color: "#F5F5F3", textTransform: "capitalize", fontFamily: "'Satoshi', system-ui, sans-serif" }}>
+                        {tier}
+                      </span>
+                      {isFree && (
+                        <span style={{ fontSize: "11px", fontWeight: 600, padding: "3px 8px", borderRadius: "4px", backgroundColor: "rgba(232, 101, 26, 0.12)", color: "#E8651A" }}>
+                          Trial
+                        </span>
+                      )}
+                      {isGrowth && (
+                        <span style={{ fontSize: "11px", fontWeight: 600, padding: "3px 8px", borderRadius: "4px", backgroundColor: "rgba(34, 197, 94, 0.12)", color: "#22C55E" }}>
+                          Active
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {isGrowth && (
+                    <span style={{ fontSize: "22px", fontWeight: 700, color: "#F5F5F3", fontFamily: "'Satoshi', system-ui, sans-serif" }}>
+                      $39<span style={{ fontSize: "14px", fontWeight: 400, color: "#A3A3A0" }}>/mo</span>
+                    </span>
+                  )}
                 </div>
+
+                {/* Expiry / Renewal date */}
+                <div style={{ marginTop: "12px", paddingTop: "12px", borderTop: "1px solid #2A2A2A" }}>
+                  {isFree && (
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px" }}>
+                      <span style={{ color: "#A3A3A0" }}>Trial expires</span>
+                      <span style={{
+                        color: userData?.trial_ends_at && new Date(userData.trial_ends_at) < new Date() ? "#EF4444" : "#F5F5F3",
+                        fontWeight: 500,
+                      }}>
+                        {userData?.trial_ends_at
+                          ? formatTrialExpiry(userData.trial_ends_at) + (new Date(userData.trial_ends_at) < new Date() ? " (Expired)" : "")
+                          : "Not activated"}
+                      </span>
+                    </div>
+                  )}
+                  {isGrowth && (
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px" }}>
+                      <span style={{ color: "#A3A3A0" }}>Next renewal</span>
+                      <span style={{ color: "#F5F5F3", fontWeight: 500 }}>
+                        {credits?.last_reset_at
+                          ? new Date(new Date(credits.last_reset_at).getTime() + 30 * 86400000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                          : "—"}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Credits Consumed */}
+              <div style={{ backgroundColor: "#141414", border: "1px solid #2A2A2A", borderRadius: "12px", padding: "20px", marginBottom: "16px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
+                  <span style={{ fontSize: "14px", fontWeight: 500, color: "#F5F5F3" }}>Credits Consumed</span>
+                  <span style={{ fontSize: "13px", color: "#A3A3A0" }}>
+                    {isFree ? "Lifetime allocation" : "Resets monthly"}
+                  </span>
+                </div>
+
+                {/* Visual progress bar */}
+                <div style={{ marginBottom: "16px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", marginBottom: "8px" }}>
+                    <span style={{ color: "#A3A3A0" }}>
+                      <span style={{ color: barColor, fontWeight: 700, fontSize: "20px" }}>{used.toFixed(1)}</span>
+                      <span style={{ color: "#6B6B68" }}> / {totalCredits}</span>
+                      <span style={{ color: "#6B6B68" }}> consumed</span>
+                    </span>
+                    <span style={{ color: "#6B6B68" }}>{consumedPercent}% used</span>
+                  </div>
+
+                  {/* Progress bar track */}
+                  <div style={{ width: "100%", height: "10px", backgroundColor: "#2A2A2A", borderRadius: "5px", overflow: "hidden" }}>
+                    <div
+                      style={{
+                        width: `${consumedPercent}%`,
+                        height: "100%",
+                        backgroundColor: barColor,
+                        borderRadius: "5px",
+                        transition: "width 300ms ease",
+                        minWidth: consumedPercent > 0 ? "4px" : "0",
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Low credits warning */}
+                {consumedPercent >= 80 && balance > 0 && (
+                  <div style={{ marginTop: "12px", padding: "10px 14px", backgroundColor: "rgba(245, 158, 11, 0.08)", border: "1px solid rgba(245, 158, 11, 0.25)", borderRadius: "8px", fontSize: "13px", color: "#F59E0B" }}>
+                    Your credits are running low. Upgrade to Growth for 250 credits/month.
+                  </div>
+                )}
+                {balance <= 0 && (
+                  <div style={{ marginTop: "12px", padding: "10px 14px", backgroundColor: "rgba(239, 68, 68, 0.08)", border: "1px solid rgba(239, 68, 68, 0.25)", borderRadius: "8px", fontSize: "13px", color: "#EF4444" }}>
+                    No credits remaining. Upgrade your plan to continue using Thread Analysis and Comment Drafting.
+                  </div>
+                )}
+              </div>
+
+              {/* Upgrade CTA */}
+              {(isFree || (isGrowth && balance <= 0)) && (
+                <button
+                  onClick={() => window.location.href = "/pricing"}
+                  style={{
+                    width: "100%", padding: "14px", fontSize: "15px", fontWeight: 600,
+                    borderRadius: "10px", border: "none", backgroundColor: "#E8651A",
+                    color: "#FFF", cursor: "pointer", fontFamily: "'DM Sans', system-ui, sans-serif",
+                    transition: "background-color 150ms",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "#F57A33"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "#E8651A"; }}
+                >
+                  {isFree ? "Upgrade to Growth — $39/mo" : "Upgrade Plan"}
+                </button>
               )}
-              <p style={{ fontSize: "13px", color: "#6B6B68", marginTop: "16px" }}>
-                Detailed usage analytics and billing management coming soon.
-              </p>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     </div>
   );
