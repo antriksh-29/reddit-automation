@@ -7,7 +7,7 @@
  *   2. Backfill embeddings for any businesses missing them
  *   3. Start HTTP server (health + scan-now + generate-embeddings webhooks)
  *   4. Run initial scan immediately
- *   5. Start 15-min scan interval
+ *   5. Start 30-min scan interval
  *
  * ENDPOINTS:
  *   GET  /health              → { status, model_loaded, last_scan, uptime }
@@ -27,7 +27,7 @@ import {
 } from "./scanner.js";
 
 const PORT = Number(process.env.PORT) || 3001;
-const SCAN_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+const SCAN_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 const WEBHOOK_SECRET = process.env.WORKER_WEBHOOK_SECRET || "dev-secret";
 
 const startedAt = new Date();

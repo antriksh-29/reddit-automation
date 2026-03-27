@@ -135,7 +135,7 @@ export async function scoreRelevance(
 function recencyScore(postCreatedUtc: number): number {
   const ageMinutes = (Date.now() / 1000 - postCreatedUtc) / 60;
 
-  if (ageMinutes < 15) return 1.0;
+  if (ageMinutes < 30) return 1.0;  // Within current scan window
   if (ageMinutes < 60) return 0.8;
   if (ageMinutes < 180) return 0.6; // 3 hours
   if (ageMinutes < 360) return 0.4; // 6 hours
@@ -215,8 +215,8 @@ export function calculatePriority(
   const roundedScore = Math.round(score * 100) / 100;
 
   let level: "high" | "medium" | "low";
-  if (roundedScore > 0.7) level = "high";
-  else if (roundedScore >= 0.4) level = "medium";
+  if (roundedScore > 0.5) level = "high";
+  else if (roundedScore >= 0.35) level = "medium";
   else level = "low";
 
   return { score: roundedScore, level, factors };

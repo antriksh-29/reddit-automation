@@ -516,7 +516,7 @@ export default function DashboardPage() {
           <p style={{ fontSize: "13px", color: "#999" }}>
             {activeFilters > 0
               ? "Try adjusting your filters."
-              : "We're scanning your subreddits every 15 minutes. Alerts will appear here."}
+              : "We're scanning your subreddits every 30 minutes. Alerts will appear here."}
           </p>
         </div>
       )}

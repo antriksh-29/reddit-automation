@@ -9,7 +9,7 @@
  *   4. Per-post, per-user: Pass 1 → Pass 2 → Priority → Alert
  *   5. Update scan timestamps
  *
- * Circuit breaker: abort at 13 min to stay within 15-min window.
+ * Circuit breaker: abort at 27 min to stay within 30-min window.
  * Mutex: skip cycle if previous scan still running.
  */
 
@@ -111,8 +111,8 @@ export async function runScanCycle(): Promise<ScanMetrics> {
     console.log(`[scanner] Scanning ${uniqueSubs.length} unique subreddits`);
 
     for (const subName of uniqueSubs) {
-      // Circuit breaker: abort if approaching 15-min limit
-      if (Date.now() - cycleStart > 13 * 60 * 1000) {
+      // Circuit breaker: abort if approaching 30-min limit
+      if (Date.now() - cycleStart > 27 * 60 * 1000) {
         console.warn("[scanner] Circuit breaker: aborting remaining subreddits");
         metrics.aborted = true;
         break;
