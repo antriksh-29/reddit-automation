@@ -220,10 +220,10 @@ export async function runScanCycle(): Promise<ScanMetrics> {
  * Scan a single subreddit — fetch posts, score per user, create alerts.
  */
 async function scanSubreddit(subName: string, metrics: ScanMetrics): Promise<void> {
-  // Get the last seen post ID for this subreddit (from any user monitoring it)
+  // Get the last scanned timestamp for dedup (when did we last scan this sub?)
   const { data: subRecord } = await supabase
     .from("monitored_subreddits")
-    .select("last_seen_post_id")
+    .select("last_seen_post_id, last_scanned_at")
     .eq("subreddit_name", subName)
     .eq("is_active", true)
     .limit(1)
@@ -243,34 +243,47 @@ async function scanSubreddit(subName: string, metrics: ScanMetrics): Promise<voi
   const users = await getEligibleUsers(subName);
   if (users.length === 0) return;
 
-  // Filter out posts we've already seen (by checking last_seen_post_id timestamp)
-  const lastSeenId = subRecord?.last_seen_post_id;
-  const newPosts = lastSeenId
-    ? posts.filter((p) => p.name > lastSeenId || !lastSeenId)
+  // Dedup: filter out posts we've already processed.
+  // Use created_utc timestamp comparison (NOT string ID comparison — Reddit IDs
+  // are base-36 and don't sort chronologically as strings).
+  // The per-business alert dedup (reddit_post_id unique check) is the real safety net.
+  const lastScannedAt = subRecord?.last_scanned_at
+    ? new Date(subRecord.last_scanned_at).getTime() / 1000
+    : 0;
+
+  const newPosts = lastScannedAt > 0
+    ? posts.filter((p) => p.created_utc > lastScannedAt)
     : posts;
 
-  if (newPosts.length === 0) return;
+  console.log(`[scanner] r/${subName}: ${newPosts.length} new posts (${posts.length - newPosts.length} already seen)`);
 
-  // Process each post against each user (dedup is per-business, not global)
+  if (newPosts.length === 0) {
+    // Still update last_scanned_at so we know we checked
+    await supabase
+      .from("monitored_subreddits")
+      .update({ last_scanned_at: new Date().toISOString() })
+      .eq("subreddit_name", subName)
+      .eq("is_active", true);
+    return;
+  }
+
+  // Process each post against each user (dedup is per-business via reddit_post_id unique)
   for (const post of newPosts) {
-    // Score against each eligible user — dedup happens inside scoreAndAlert per-business
     await Promise.allSettled(
       users.map((user) => scoreAndAlert(post, user, metrics))
     );
   }
 
-  // Update last_seen_post_id for all monitored_subreddits rows with this name
+  // Update tracking: store the newest post's name + current timestamp
   const latestPostName = posts[0]?.name; // Posts are sorted newest first
-  if (latestPostName) {
-    await supabase
-      .from("monitored_subreddits")
-      .update({
-        last_scanned_at: new Date().toISOString(),
-        last_seen_post_id: latestPostName,
-      })
-      .eq("subreddit_name", subName)
-      .eq("is_active", true);
-  }
+  await supabase
+    .from("monitored_subreddits")
+    .update({
+      last_scanned_at: new Date().toISOString(),
+      last_seen_post_id: latestPostName || subRecord?.last_seen_post_id,
+    })
+    .eq("subreddit_name", subName)
+    .eq("is_active", true);
 }
 
 /**
