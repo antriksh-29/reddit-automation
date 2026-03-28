@@ -176,27 +176,30 @@ async function main() {
     }
 
     try {
-      const redditRes = await fetch(`https://api.reddit.com/r/${cleanName}/about`, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; AreteBot/1.0; +https://getarete.co)", "Accept": "application/json" },
-        redirect: "manual",
-        signal: AbortSignal.timeout(10000),
-      });
+      // Use /new.json?limit=1 — same endpoint the scanner uses successfully from Railway.
+      // Reddit blocks /about and /about.json from cloud IPs but /new.json works.
+      const redditRes = await fetch(
+        `https://api.reddit.com/r/${cleanName}/new.json?limit=1&raw_json=1`,
+        {
+          headers: { "User-Agent": "Arete/1.0 (Reddit Lead Intelligence)" },
+          redirect: "manual",
+          signal: AbortSignal.timeout(10000),
+        }
+      );
 
-      // 302/301 = non-existent (redirect to search)
+      // 302 = non-existent (redirect to search)
       if (redditRes.status === 302 || redditRes.status === 301) {
         res.json({ valid: false, reason: `r/${cleanName} does not exist. Please check the spelling.` });
         return;
       }
 
-      // 404 = banned
+      // 404 = banned or removed
       if (redditRes.status === 404) {
-        let detail = "banned or removed";
-        try { const b = await redditRes.json(); if (b?.reason) detail = b.reason; } catch {}
-        res.json({ valid: false, reason: `r/${cleanName} has been ${detail} by Reddit.` });
+        res.json({ valid: false, reason: `r/${cleanName} has been banned or removed by Reddit.` });
         return;
       }
 
-      // 403 = quarantined or private
+      // 403 = quarantined, private, or IP-blocked
       if (redditRes.status === 403) {
         let restrictReason = "restricted";
         try {
@@ -214,23 +217,25 @@ async function main() {
       }
 
       const data = await redditRes.json();
-      if (data?.kind !== "t5" || !data?.data) {
+      const children = data?.data?.children || [];
+
+      // If we got a valid Listing response, the subreddit exists
+      if (data?.kind !== "Listing") {
         res.json({ valid: false, reason: `r/${cleanName} does not exist.` });
         return;
       }
 
-      const sub = data.data;
-      if (sub.over18) {
-        res.json({ valid: false, reason: `r/${cleanName} is NSFW and cannot be monitored.` });
-        return;
-      }
+      // Extract subreddit name from the first post (preserves correct casing)
+      const displayName = children.length > 0
+        ? children[0]?.data?.subreddit || cleanName
+        : cleanName;
 
       res.json({
         valid: true,
         subreddit: {
-          name: sub.display_name || cleanName,
-          subscribers: sub.subscribers || 0,
-          description: sub.public_description || "",
+          name: displayName,
+          subscribers: 0, // /new.json doesn't include sub count — that's fine
+          description: "",
         },
       });
     } catch (err) {
