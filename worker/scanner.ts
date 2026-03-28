@@ -18,7 +18,7 @@ import pLimit from "p-limit";
 import { fetchNewPosts, type RedditPost } from "./reddit.js";
 import { prefilterPost, type UserProfile } from "./prefilter.js";
 import { scoreRelevance, calculatePriority, type PostCategory } from "./scoring.js";
-import { sendAlertEmail, type AlertEmailData } from "../src/lib/email/ses.js";
+import { sendBatchedAlertEmail, type AlertEmailData } from "../src/lib/email/ses.js";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -48,13 +48,18 @@ interface EligibleUser {
   user_id: string;
   email: string;
   business_id: string;
+  business_name: string;
   description: string;
   icp_description: string;
   keywords: { primary: string[]; discovery: string[] };
   competitors: string[];
   embedding_vectors: number[] | null;
   subreddit_id: string;
+  notification_preferences: { email_enabled: boolean; email_priorities: string[] } | null;
 }
+
+// Collect alerts per user during scan cycle, send as one batched email after
+const pendingEmails = new Map<string, { email: string; businessName: string; alerts: AlertEmailData[] }>();
 
 export function isScanInProgress(): boolean {
   return scanInProgress;
@@ -125,6 +130,57 @@ export async function runScanCycle(): Promise<ScanMetrics> {
         console.error(`[scanner] Error scanning r/${subName}:`, error);
         metrics.errors++;
       }
+    }
+
+    // Send batched emails — one per user with all their alerts
+    if (pendingEmails.size > 0) {
+      console.log(`[scanner] Sending batched emails to ${pendingEmails.size} user(s)...`);
+
+      for (const [userId, { email, businessName, alerts }] of pendingEmails) {
+        try {
+          const sent = await sendBatchedAlertEmail(email, businessName, alerts);
+
+          if (sent) {
+            // Mark all alerts in this batch as sent
+            const postUrls = alerts.map((a) => a.postUrl);
+            // Extract reddit_post_ids from URLs for matching
+            for (const alert of alerts) {
+              const postIdMatch = alert.postUrl.match(/comments\/([^/]+)/);
+              if (postIdMatch) {
+                await supabase.from("alerts").update({
+                  email_status: "sent",
+                  email_sent_at: new Date().toISOString(),
+                }).eq("reddit_post_id", `t3_${postIdMatch[1]}`).eq("business_id",
+                  // Find business_id for this user
+                  (await supabase.from("businesses").select("id").eq("user_id", userId).single()).data?.id
+                );
+              }
+            }
+
+            await supabase.from("event_logs").insert({
+              user_id: userId,
+              event_type: "email.batch_sent",
+              event_data: { alerts_count: alerts.length, priorities: alerts.map((a) => a.priorityLevel) },
+              source: "cron",
+            });
+
+            console.log(`[scanner] Batched email sent to ${email}: ${alerts.length} alert(s)`);
+          } else {
+            // Mark alerts as failed
+            await supabase.from("event_logs").insert({
+              user_id: userId,
+              event_type: "email.batch_failed",
+              event_data: { alerts_count: alerts.length, error: "SES send failed" },
+              source: "cron",
+            });
+          }
+        } catch (err) {
+          console.error(`[scanner] Batch email failed for ${email}:`, (err as Error).message);
+        }
+      }
+
+      // Clear pending emails for next cycle
+      pendingEmails.clear();
     }
 
     // Log scan cycle event
@@ -240,6 +296,7 @@ async function getEligibleUsers(subName: string): Promise<EligibleUser[]> {
       businesses!inner (
         id,
         user_id,
+        name,
         description,
         icp_description,
         keywords,
@@ -301,6 +358,7 @@ async function getEligibleUsers(subName: string): Promise<EligibleUser[]> {
         user_id: business.users.id,
         email: business.users.email,
         business_id: business.id,
+        business_name: business.name || "Your Business",
         description: business.description || "",
         icp_description: business.icp_description || "",
         keywords: business.keywords || { primary: [], discovery: [] },
@@ -394,7 +452,7 @@ async function scoreAndAlert(
       `→ ${priority.level} (${priority.score}) [${category}]`
   );
 
-  // Send email based on user's notification preferences
+  // Collect alert for batched email (sent after scan cycle completes)
   const notifPrefs = user.notification_preferences || { email_enabled: true, email_priorities: ["high", "medium"] };
   const shouldEmail = notifPrefs.email_enabled && notifPrefs.email_priorities.includes(priority.level);
 
@@ -415,37 +473,12 @@ async function scoreAndAlert(
       timeAgo,
     };
 
-    const emailSent = await sendAlertEmail(user.email, emailData);
-
-    // Update email status on the alert
-    if (emailSent) {
-      await supabase.from("alerts").update({
-        email_status: "sent",
-        email_sent_at: new Date().toISOString(),
-      }).eq("reddit_post_id", post.id).eq("business_id", user.business_id);
-
-      await supabase.from("event_logs").insert({
-        user_id: user.user_id,
-        business_id: user.business_id,
-        event_type: "email.sent",
-        event_data: { alert_post_id: post.id, priority_level: priority.level },
-        source: "cron",
-      });
-
-      console.log(`[scanner] Email sent to ${user.email} for "${post.title.slice(0, 50)}..."`);
-    } else {
-      await supabase.from("alerts").update({
-        email_status: "failed",
-      }).eq("reddit_post_id", post.id).eq("business_id", user.business_id);
-
-      await supabase.from("event_logs").insert({
-        user_id: user.user_id,
-        business_id: user.business_id,
-        event_type: "email.failed",
-        event_data: { alert_post_id: post.id, error: "SES send failed" },
-        source: "cron",
-      });
+    // Add to pending emails map (grouped by user)
+    const userKey = user.user_id;
+    if (!pendingEmails.has(userKey)) {
+      pendingEmails.set(userKey, { email: user.email, businessName: user.business_name, alerts: [] });
     }
+    pendingEmails.get(userKey)!.alerts.push(emailData);
   }
 
   // Log the event
