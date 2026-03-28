@@ -61,20 +61,27 @@ export async function POST(request: NextRequest) {
 
   const subredditName = sub?.subreddit_name || "unknown";
 
-  // Fetch subreddit rules
+  // Fetch subreddit rules (proxy through Railway — Reddit blocks Vercel IPs)
   let rules = "No specific rules available.";
   try {
-    const rulesRes = await fetch(
-      `https://api.reddit.com/r/${subredditName}/about/rules.json?raw_json=1`,
-      { headers: { "User-Agent": "Arete/1.0" }, redirect: "manual" }
-    );
-    if (rulesRes.ok) {
-      const rulesData = await rulesRes.json();
-      const rulesList = rulesData.rules || [];
-      if (rulesList.length > 0) {
-        rules = rulesList.map((r: { short_name: string; description: string }) =>
-          `- ${r.short_name}: ${r.description?.slice(0, 150) || "No description"}`
-        ).join("\n");
+    const workerUrl = process.env.WORKER_URL;
+    const workerSecret = process.env.WORKER_WEBHOOK_SECRET;
+
+    if (workerUrl && workerSecret) {
+      const rulesRes = await fetch(`${workerUrl}/fetch-rules`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${workerSecret}`,
+        },
+        body: JSON.stringify({ subreddit: subredditName }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (rulesRes.ok) {
+        const rulesData = await rulesRes.json();
+        if (rulesData.rules) {
+          rules = rulesData.rules;
+        }
       }
     }
   } catch {

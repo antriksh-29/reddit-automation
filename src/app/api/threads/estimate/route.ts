@@ -51,66 +51,52 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Fetch thread metadata from Reddit
-  let cleanUrl = reddit_url.split("?")[0].split("#")[0].replace(/\/$/, "");
-  cleanUrl = cleanUrl.replace("://www.reddit.com", "://api.reddit.com");
-  cleanUrl = cleanUrl.replace("://reddit.com", "://api.reddit.com");
-  cleanUrl = cleanUrl.replace("://old.reddit.com", "://api.reddit.com");
-
-  if (!cleanUrl.match(/reddit\.com\/r\/\w+\/comments\/\w+/)) {
+  // Validate URL format
+  const cleanedUrl = reddit_url.split("?")[0].split("#")[0].replace(/\/$/, "");
+  if (!cleanedUrl.match(/reddit\.com\/r\/\w+\/comments\/\w+/)) {
     return NextResponse.json({ error: "Invalid Reddit post URL" }, { status: 400 });
   }
 
   try {
-    const jsonUrl = cleanUrl + ".json?raw_json=1&limit=100";
-    const res = await fetch(jsonUrl, {
-      headers: { "User-Agent": "Arete/1.0 (estimate)" },
-      redirect: "manual",
-    });
+    // Proxy through Railway worker — Reddit blocks Vercel IPs
+    const workerUrl = process.env.WORKER_URL;
+    const workerSecret = process.env.WORKER_WEBHOOK_SECRET;
 
-    if (!res.ok || res.status === 302) {
-      return NextResponse.json({ error: "Could not fetch thread" }, { status: 400 });
-    }
-
-    const data = await res.json();
-    if (!Array.isArray(data) || data.length < 2) {
-      return NextResponse.json({ error: "Invalid thread data" }, { status: 400 });
-    }
-
-    const post = data[0]?.data?.children?.[0]?.data;
-    if (!post) {
-      return NextResponse.json({ error: "Post not found" }, { status: 400 });
-    }
-
-    // Calculate token estimates
-    const postBody = post.selftext || "";
-    const postTitle = post.title || "";
-    const numComments = post.num_comments || 0;
-
-    // Count actual comment text from fetched comments
-    let totalCommentChars = 0;
+    let postTitle = "";
+    let postBody = "";
+    let numComments = 0;
     let fetchedComments = 0;
-    function countComments(children: unknown[]) {
-      if (!Array.isArray(children)) return;
-      for (const child of children) {
-        const c = (child as Record<string, unknown>)?.data as Record<string, unknown> | undefined;
-        if (!c || !c.body) continue;
-        totalCommentChars += Math.min((c.body as string).length, 500); // We cap at 500 chars per comment
-        fetchedComments++;
-        if (c.replies && typeof c.replies === "object") {
-          const replyData = (c.replies as Record<string, unknown>)?.data as Record<string, unknown> | undefined;
-          if (replyData?.children) countComments(replyData.children as unknown[]);
-        }
+    let totalCommentChars = 0;
+
+    if (workerUrl && workerSecret) {
+      const res = await fetch(`${workerUrl}/fetch-thread`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${workerSecret}`,
+        },
+        body: JSON.stringify({ url: reddit_url }),
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        postTitle = data.thread?.title || "";
+        postBody = data.thread?.body || "";
+        numComments = data.thread?.num_comments || 0;
+        fetchedComments = (data.comments || []).length;
+        totalCommentChars = (data.comments || []).reduce(
+          (sum: number, c: { body: string }) => sum + Math.min((c.body || "").length, 500), 0
+        );
       }
     }
-    countComments(data[1]?.data?.children || []);
 
     // Token estimation (1 token ≈ 4 chars)
     const systemPromptTokens = 200;
     const businessContextTokens = 150;
     const postTokens = Math.ceil((postTitle.length + Math.min(postBody.length, 1500)) / 4);
     const commentTokens = Math.ceil(totalCommentChars / 4);
-    const outputTokens = 500; // Estimated output
+    const outputTokens = 500;
 
     const totalInputTokens = systemPromptTokens + businessContextTokens + postTokens + commentTokens;
     const totalTokens = totalInputTokens + outputTokens;
@@ -124,10 +110,10 @@ export async function POST(request: NextRequest) {
       .single();
 
     return NextResponse.json({
-      estimatedCredits,
+      estimatedCredits: estimatedCredits || 5,
       cached: false,
       balance: balance?.balance || 0,
-      hasEnough: (balance?.balance || 0) >= estimatedCredits,
+      hasEnough: (balance?.balance || 0) >= (estimatedCredits || 5),
       breakdown: {
         postTitle: postTitle.slice(0, 80),
         postLength: postBody.length,
@@ -139,7 +125,6 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch {
-    // Fallback to static estimate if fetch fails
     return NextResponse.json({
       estimatedCredits: 5,
       cached: false,

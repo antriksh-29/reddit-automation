@@ -145,75 +145,57 @@ interface RedditThread {
 }
 
 async function fetchRedditThread(url: string): Promise<RedditThread | null> {
-  // Strip query params and hash (utm_source, utm_medium, etc.)
-  let cleanUrl = url.split("?")[0].split("#")[0];
+  // Proxy through Railway worker — Reddit blocks Vercel IPs
+  const workerUrl = process.env.WORKER_URL;
+  const workerSecret = process.env.WORKER_WEBHOOK_SECRET;
 
-  // Normalize URL
-  cleanUrl = cleanUrl.replace(/\/$/, "");
-  cleanUrl = cleanUrl.replace("://www.reddit.com", "://api.reddit.com");
-  cleanUrl = cleanUrl.replace("://reddit.com", "://api.reddit.com");
-  cleanUrl = cleanUrl.replace("://old.reddit.com", "://api.reddit.com");
-
-  // Validate it's a Reddit post URL
-  if (!cleanUrl.includes("reddit.com/r/")) return null;
-  if (!cleanUrl.match(/reddit\.com\/r\/\w+\/comments\/\w+/)) return null;
-
-  // Add .json extension
-  if (!cleanUrl.endsWith(".json")) cleanUrl += ".json";
-
-  const jsonUrl = cleanUrl + "?raw_json=1&limit=100";
-
-  const res = await fetch(jsonUrl, {
-    headers: { "User-Agent": "Arete/1.0 (thread-analysis)" },
-    redirect: "manual",
-  });
-
-  // Handle various HTTP errors
-  if (res.status === 302) return null; // Redirect = post doesn't exist
-  if (res.status === 403) return null; // Private/quarantined subreddit
-  if (res.status === 404) return null; // Deleted post
-  if (!res.ok) return null;
-
-  const data = await res.json();
-  if (!Array.isArray(data) || data.length < 2) return null;
-
-  const post = data[0]?.data?.children?.[0]?.data;
-  if (!post) return null;
-
-  // Extract comments (flatten tree, max 100)
-  const comments: RedditThread["comments"] = [];
-  function extractComments(children: unknown[], depth: number) {
-    if (!Array.isArray(children) || comments.length >= 100) return;
-    for (const child of children) {
-      const c = (child as Record<string, unknown>)?.data as Record<string, unknown> | undefined;
-      if (!c || !c.body) continue;
-      comments.push({
-        author: (c.author as string) || "[deleted]",
-        body: (c.body as string).slice(0, 500),
-        upvotes: (c.ups as number) || 0,
-        depth,
-      });
-      if (c.replies && typeof c.replies === "object") {
-        const replyData = (c.replies as Record<string, unknown>)?.data as Record<string, unknown> | undefined;
-        if (replyData?.children) {
-          extractComments(replyData.children as unknown[], depth + 1);
-        }
-      }
-    }
+  if (!workerUrl || !workerSecret) {
+    console.error("[thread-analysis] WORKER_URL or WORKER_WEBHOOK_SECRET not set");
+    return null;
   }
 
-  extractComments(data[1]?.data?.children || [], 0);
+  try {
+    const res = await fetch(`${workerUrl}/fetch-thread`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${workerSecret}`,
+      },
+      body: JSON.stringify({ url }),
+      signal: AbortSignal.timeout(20000),
+    });
 
-  return {
-    title: post.title || "",
-    body: post.selftext || "",
-    author: post.author || "[deleted]",
-    subreddit: post.subreddit || "",
-    upvotes: post.ups || 0,
-    numComments: post.num_comments || 0,
-    url,
-    comments,
-  };
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      console.error(`[thread-analysis] Worker fetch-thread failed: ${err.error}`);
+      return null;
+    }
+
+    const data = await res.json();
+    const t = data.thread;
+    const comments: RedditThread["comments"] = (data.comments || [])
+      .slice(0, 100)
+      .map((c: { author: string; body: string; score: number; depth: number }) => ({
+        author: c.author || "[deleted]",
+        body: (c.body || "").slice(0, 500),
+        upvotes: c.score || 0,
+        depth: c.depth || 0,
+      }));
+
+    return {
+      title: t.title || "",
+      body: t.body || "",
+      author: t.author || "[deleted]",
+      subreddit: t.subreddit || "",
+      upvotes: t.upvotes || 0,
+      numComments: t.num_comments || 0,
+      url,
+      comments,
+    };
+  } catch (err) {
+    console.error("[thread-analysis] fetchRedditThread error:", err);
+    return null;
+  }
 }
 
 function buildAnalysisPrompt(thread: RedditThread, business: Record<string, unknown>): string {
