@@ -274,10 +274,15 @@ export default function OnboardingPage() {
     setKeywordError(null);
   }
 
-  // Add subreddit with Reddit API validation
+  // Add subreddit — validates via our API which proxies to Railway worker
+  // (Reddit blocks Vercel IPs, Railway IPs work fine)
   async function addSubreddit() {
     const name = newSubreddit.trim().replace(/^r\//, "").toLowerCase();
     if (!name) return;
+    if (!/^[a-zA-Z0-9_]+$/.test(name)) {
+      setSubredditError("Invalid name. Only letters, numbers, and underscores.");
+      return;
+    }
     if (subreddits.length >= MAX_SUBREDDITS_FREE) {
       setSubredditError(`Maximum ${MAX_SUBREDDITS_FREE} subreddits on the free plan.`);
       return;
