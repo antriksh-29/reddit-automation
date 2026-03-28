@@ -52,7 +52,7 @@ export interface RedditPost {
 export async function fetchNewPosts(
   subredditName: string,
   options: { limit?: number; after?: string | null } = {}
-): Promise<{ posts: RedditPost[]; after: string | null }> {
+): Promise<{ posts: RedditPost[]; after: string | null; errorStatus?: "not_found" | "private" | "banned" }> {
   const limit = options.limit || 25;
   // Sanitize subreddit name to prevent path traversal
   const safeName = encodeURIComponent(subredditName.replace(/[^a-zA-Z0-9_]/g, ""));
@@ -66,17 +66,29 @@ export async function fetchNewPosts(
   // 302 = subreddit doesn't exist (redirect to search)
   if (res.status === 302) {
     console.warn(`[reddit] r/${subredditName}: does not exist (302)`);
-    return { posts: [], after: null };
+    return { posts: [], after: null, errorStatus: "not_found" as const };
   }
 
   if (res.status === 403) {
+    // Check if it's an actual restriction or just IP block
+    let isIPBlock = false;
+    try {
+      const contentType = res.headers.get("content-type") || "";
+      isIPBlock = contentType.includes("text/html"); // HTML = IP block, JSON = actual restriction
+    } catch {}
+
+    if (isIPBlock) {
+      console.warn(`[reddit] r/${subredditName}: IP blocked by Reddit (403 HTML response)`);
+      return { posts: [], after: null }; // Don't mark as invalid — it's our IP being blocked
+    }
+
     console.warn(`[reddit] r/${subredditName}: private or quarantined (403)`);
-    return { posts: [], after: null };
+    return { posts: [], after: null, errorStatus: "private" as const };
   }
 
   if (res.status === 404) {
     console.warn(`[reddit] r/${subredditName}: banned or removed (404)`);
-    return { posts: [], after: null };
+    return { posts: [], after: null, errorStatus: "banned" as const };
   }
 
   if (!res.ok) {
