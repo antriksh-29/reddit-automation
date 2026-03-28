@@ -176,8 +176,8 @@ async function main() {
     }
 
     try {
-      const redditRes = await fetch(`https://www.reddit.com/r/${cleanName}/about.json?raw_json=1`, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; AreteBot/1.0; +https://getarete.co)" },
+      const redditRes = await fetch(`https://api.reddit.com/r/${cleanName}/about`, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; AreteBot/1.0; +https://getarete.co)", "Accept": "application/json" },
         redirect: "manual",
         signal: AbortSignal.timeout(10000),
       });
