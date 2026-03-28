@@ -98,7 +98,7 @@ export async function scoreRelevance(
       const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
       const gptRes = await openai.chat.completions.create({
         model: "gpt-5.4-mini",
-        max_tokens: 100,
+        max_completion_tokens: 100,
         messages: [{ role: "user", content: prompt }],
       });
       text = gptRes.choices[0]?.message?.content || "";
