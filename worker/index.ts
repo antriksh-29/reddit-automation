@@ -16,6 +16,7 @@
  */
 
 import express from "express";
+import { createClient } from "@supabase/supabase-js";
 import { loadModel, isModelLoaded } from "./embeddings.js";
 import { backfillEmbeddings, generateAndStoreEmbedding } from "./generate-embeddings.js";
 import { runFirstScan } from "./first-scan.js";
@@ -425,12 +426,44 @@ async function main() {
     console.log(`[worker] Health server listening on port ${PORT}`);
   });
 
-  // 4. Run initial scan immediately
-  console.log("[worker] Running initial scan...");
+  // 4. Run initial scan — but ONLY if no scan happened recently
+  //    Railway restarts the worker frequently, each restart would trigger
+  //    a scan + email. This guard prevents email spam.
+  const MIN_SCAN_GAP_MS = 25 * 60 * 1000; // 25 minutes
+  let shouldRunInitialScan = true;
   try {
-    await runScanCycle();
-  } catch (error) {
-    console.error("[worker] Initial scan failed:", error);
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { persistSession: false } }
+    );
+    const { data: lastScan } = await supabase
+      .from("event_logs")
+      .select("created_at")
+      .eq("event_type", "scan.cycle_completed")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
+
+    if (lastScan) {
+      const lastScanAge = Date.now() - new Date(lastScan.created_at).getTime();
+      if (lastScanAge < MIN_SCAN_GAP_MS) {
+        const minsAgo = Math.round(lastScanAge / 60000);
+        console.log(`[worker] Skipping initial scan — last scan was ${minsAgo}m ago (min gap: ${MIN_SCAN_GAP_MS / 60000}m)`);
+        shouldRunInitialScan = false;
+      }
+    }
+  } catch (err) {
+    console.error("[worker] Failed to check last scan time, running scan anyway:", err);
+  }
+
+  if (shouldRunInitialScan) {
+    console.log("[worker] Running initial scan...");
+    try {
+      await runScanCycle();
+    } catch (error) {
+      console.error("[worker] Initial scan failed:", error);
+    }
   }
 
   // 5. Start scan interval
