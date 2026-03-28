@@ -37,16 +37,42 @@ export async function POST(request: Request) {
   }
 
   try {
-    const response = await fetch(
-      `https://www.reddit.com/r/${cleanName}/about.json`,
-      {
-        headers: {
-          "User-Agent": "Arete/1.0 (subreddit-validation)",
-        },
-        redirect: "manual",
-        signal: AbortSignal.timeout(8000),
+    // Try multiple User-Agent strings — Reddit blocks some cloud IPs with generic UAs
+    const userAgents = [
+      "Mozilla/5.0 (compatible; AreteBot/1.0; +https://getarete.co)",
+      "Arete/1.0 (subreddit-validation; contact: antriksh@getarete.co)",
+    ];
+
+    let response: Response | null = null;
+    for (const ua of userAgents) {
+      response = await fetch(
+        `https://www.reddit.com/r/${cleanName}/about.json`,
+        {
+          headers: {
+            "User-Agent": ua,
+            "Accept": "application/json",
+          },
+          redirect: "manual",
+          signal: AbortSignal.timeout(8000),
+        }
+      );
+      // If we got a real response (not 403 from IP block), use it
+      if (response.status !== 403) break;
+      // For 403, check if it's a real restriction vs IP block
+      try {
+        const body403 = await response.clone().json();
+        if (body403?.reason === "quarantined" || body403?.reason === "private") break; // Real restriction
+      } catch {
+        // 403 without JSON body = likely IP block, try next UA
       }
-    );
+    }
+
+    if (!response) {
+      return NextResponse.json({
+        valid: false,
+        reason: "Could not reach Reddit. Please try again.",
+      });
+    }
 
     // 302/301 = Reddit redirects to search → subreddit does not exist
     if (response.status === 302 || response.status === 301) {
@@ -64,7 +90,7 @@ export async function POST(request: Request) {
       });
     }
 
-    // 403 = quarantined or private
+    // 403 = quarantined, private, or IP-blocked by Reddit
     if (response.status === 403) {
       // Try to parse the body to distinguish quarantined vs private
       try {
@@ -82,8 +108,40 @@ export async function POST(request: Request) {
           });
         }
       } catch {
-        // Could not parse body
+        // Could not parse body — likely an IP block, not a real restriction
       }
+
+      // Fallback: try fetching /new.json to see if the subreddit is actually readable
+      try {
+        const fallbackRes = await fetch(
+          `https://www.reddit.com/r/${cleanName}/new.json?limit=1`,
+          {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (compatible; AreteBot/1.0; +https://getarete.co)",
+              "Accept": "application/json",
+            },
+            redirect: "manual",
+            signal: AbortSignal.timeout(8000),
+          }
+        );
+        if (fallbackRes.ok) {
+          const fallbackData = await fallbackRes.json();
+          if (fallbackData?.data?.children?.length >= 0) {
+            // Subreddit is readable — the 403 was an IP block on /about.json
+            return NextResponse.json({
+              valid: true,
+              subreddit: {
+                name: cleanName,
+                subscribers: 0,
+                description: "",
+              },
+            });
+          }
+        }
+      } catch {
+        // Fallback also failed
+      }
+
       return NextResponse.json({
         valid: false,
         reason: `r/${cleanName} is restricted and cannot be monitored. It may be private or quarantined.`,
