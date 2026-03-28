@@ -176,76 +176,26 @@ async function main() {
     }
 
     try {
-      // Use /new.json?limit=1 — same endpoint the scanner uses successfully from Railway.
-      const fetchUrl = `https://api.reddit.com/r/${cleanName}/new.json?limit=1&raw_json=1`;
-      console.log(`[validate] Fetching: ${fetchUrl}`);
-      const redditRes = await fetch(fetchUrl, {
-        headers: { "User-Agent": "Arete/1.0 (Reddit Lead Intelligence)" },
-        redirect: "manual",
-        signal: AbortSignal.timeout(10000),
-      });
-      console.log(`[validate] Response: HTTP ${redditRes.status}, type=${redditRes.type}, headers=${JSON.stringify(Object.fromEntries(redditRes.headers.entries()))}`);
-
-      // If 403, try reading the body to understand why
-      if (redditRes.status === 403) {
-        const body = await redditRes.text();
-        console.log(`[validate] 403 body (first 500 chars): ${body.substring(0, 500)}`);
-      }
-
-      // 302 = non-existent (redirect to search)
-      if (redditRes.status === 302 || redditRes.status === 301) {
-        res.json({ valid: false, reason: `r/${cleanName} does not exist. Please check the spelling.` });
-        return;
-      }
-
-      // 404 = banned or removed
-      if (redditRes.status === 404) {
-        res.json({ valid: false, reason: `r/${cleanName} has been banned or removed by Reddit.` });
-        return;
-      }
-
-      // 403 = quarantined, private, or IP-blocked
-      if (redditRes.status === 403) {
-        let restrictReason = "restricted";
-        try {
-          const b = await redditRes.json();
-          if (b?.reason === "quarantined") restrictReason = "quarantined";
-          if (b?.reason === "private") restrictReason = "private";
-        } catch {}
-        res.json({ valid: false, reason: `r/${cleanName} is ${restrictReason} and cannot be monitored.` });
-        return;
-      }
-
-      if (!redditRes.ok) {
-        res.json({ valid: false, reason: `Could not verify r/${cleanName}. Reddit returned ${redditRes.status}.` });
-        return;
-      }
-
-      const data = await redditRes.json();
-      const children = data?.data?.children || [];
-
-      // If we got a valid Listing response, the subreddit exists
-      if (data?.kind !== "Listing") {
-        res.json({ valid: false, reason: `r/${cleanName} does not exist.` });
-        return;
-      }
-
-      // Extract subreddit name from the first post (preserves correct casing)
-      const displayName = children.length > 0
-        ? children[0]?.data?.subreddit || cleanName
-        : cleanName;
+      // Reddit blocks ALL cloud IPs (Vercel, Railway, AWS) from their API.
+      // We accept any valid subreddit name and validate asynchronously:
+      // - The scanner will attempt to fetch posts on the next cycle
+      // - If the subreddit doesn't exist (302), it gets marked as 'not_found'
+      // - Basic name format validation is done above (alphanumeric + underscore)
+      //
+      // This is the only reliable approach without Reddit OAuth credentials.
+      // Once we have OAuth, we can do real-time validation.
 
       res.json({
         valid: true,
         subreddit: {
-          name: displayName,
-          subscribers: 0, // /new.json doesn't include sub count — that's fine
+          name: cleanName,
+          subscribers: 0,
           description: "",
         },
       });
     } catch (err) {
       console.error(`[worker] Subreddit validation failed for ${cleanName}:`, err);
-      res.json({ valid: false, reason: "Could not reach Reddit. Please try again." });
+      res.json({ valid: false, reason: "Could not verify subreddit. Please try again." });
     }
   });
 
