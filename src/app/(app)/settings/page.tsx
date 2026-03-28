@@ -540,9 +540,9 @@ export default function SettingsPage() {
                     <div style={{ fontSize: "12px", color: "#A3A3A0", marginBottom: "12px" }}>Select which priority levels trigger email notifications</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                       {[
-                        { key: "high", label: "High priority", color: "#EF4444" },
-                        { key: "medium", label: "Medium priority", color: "#F59E0B" },
-                        { key: "low", label: "Low priority", color: "#6B6B68" },
+                        { key: "high", label: "High priority" },
+                        { key: "medium", label: "Medium priority" },
+                        { key: "low", label: "Low priority" },
                       ].map((opt) => {
                         const active = emailPriorities.has(opt.key);
                         return (
@@ -566,10 +566,7 @@ export default function SettingsPage() {
                             }}>
                               {active ? "✓" : ""}
                             </span>
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                              <span style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: opt.color, flexShrink: 0 }} />
-                              <span style={{ fontSize: "14px", fontWeight: 500, color: "#F5F5F3" }}>{opt.label}</span>
-                            </div>
+                            <span style={{ fontSize: "14px", fontWeight: 500, color: "#F5F5F3" }}>{opt.label}</span>
                           </button>
                         );
                       })}
