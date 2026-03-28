@@ -260,6 +260,167 @@ async function main() {
     }
   });
 
+  // Fetch subreddit rules endpoint (proxied from Vercel — Reddit blocks Vercel IPs)
+  app.post("/fetch-rules", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (authHeader !== `Bearer ${effectiveSecret}`) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    const { subreddit } = req.body;
+    if (!subreddit || typeof subreddit !== "string") {
+      res.status(400).json({ error: "subreddit required" });
+      return;
+    }
+
+    try {
+      const rulesUrl = `https://api.reddit.com/r/${subreddit}/about/rules.json?raw_json=1`;
+      const redditRes = await fetch(rulesUrl, {
+        headers: { "User-Agent": "Arete/1.0 (Reddit Lead Intelligence)" },
+        redirect: "manual",
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!redditRes.ok) {
+        res.json({ rules: "No specific rules available." });
+        return;
+      }
+
+      const data = await redditRes.json();
+      const rulesList = data.rules || [];
+      if (rulesList.length === 0) {
+        res.json({ rules: "No specific rules available." });
+        return;
+      }
+
+      const rules = rulesList.map((r: { short_name: string; description: string }) =>
+        `- ${r.short_name}: ${(r.description || "No description").slice(0, 150)}`
+      ).join("\n");
+
+      res.json({ rules });
+    } catch {
+      res.json({ rules: "No specific rules available." });
+    }
+  });
+
+  // Fetch Reddit thread endpoint (proxied from Vercel — Reddit blocks Vercel IPs)
+  // Used by thread analysis and draft response features
+  app.post("/fetch-thread", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (authHeader !== `Bearer ${effectiveSecret}`) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    const { url } = req.body;
+    if (!url || typeof url !== "string") {
+      res.status(400).json({ error: "URL required" });
+      return;
+    }
+
+    try {
+      // Clean the URL and convert to api.reddit.com JSON endpoint
+      let cleanUrl = url.split("?")[0].replace(/\/$/, "");
+      cleanUrl = cleanUrl.replace("://www.reddit.com", "://api.reddit.com");
+      cleanUrl = cleanUrl.replace("://reddit.com", "://api.reddit.com");
+      cleanUrl = cleanUrl.replace("://old.reddit.com", "://api.reddit.com");
+
+      if (!cleanUrl.includes(".json")) {
+        cleanUrl += ".json";
+      }
+      cleanUrl += "?raw_json=1&limit=100";
+
+      console.log(`[fetch-thread] Fetching: ${cleanUrl}`);
+
+      const redditRes = await fetch(cleanUrl, {
+        headers: { "User-Agent": "Arete/1.0 (Reddit Lead Intelligence)" },
+        redirect: "manual",
+        signal: AbortSignal.timeout(15000),
+      });
+
+      console.log(`[fetch-thread] Response: HTTP ${redditRes.status}`);
+
+      if (redditRes.status === 302 || redditRes.status === 301) {
+        res.status(404).json({ error: "Thread not found" });
+        return;
+      }
+
+      if (redditRes.status === 403) {
+        const contentType = redditRes.headers.get("content-type") || "";
+        if (contentType.includes("text/html")) {
+          res.status(503).json({ error: "Reddit is temporarily blocking requests. Please try again in a few minutes." });
+          return;
+        }
+        res.status(403).json({ error: "Thread is restricted or quarantined" });
+        return;
+      }
+
+      if (!redditRes.ok) {
+        res.status(redditRes.status).json({ error: `Reddit returned ${redditRes.status}` });
+        return;
+      }
+
+      const data = await redditRes.json();
+
+      // Parse thread data
+      if (!Array.isArray(data) || data.length < 2) {
+        res.status(422).json({ error: "Invalid thread data from Reddit" });
+        return;
+      }
+
+      const postData = data[0]?.data?.children?.[0]?.data;
+      if (!postData) {
+        res.status(404).json({ error: "Thread not found" });
+        return;
+      }
+
+      // Extract comments recursively
+      const comments: { author: string; body: string; score: number; depth: number }[] = [];
+      function extractComments(children: unknown[], depth = 0) {
+        if (!Array.isArray(children)) return;
+        for (const child of children) {
+          const c = (child as { kind: string; data: Record<string, unknown> });
+          if (c.kind !== "t1") continue;
+          const d = c.data;
+          if (d.author && d.body) {
+            comments.push({
+              author: d.author as string,
+              body: d.body as string,
+              score: (d.score as number) || 0,
+              depth,
+            });
+          }
+          if (d.replies && typeof d.replies === "object") {
+            const replies = (d.replies as { data?: { children?: unknown[] } });
+            if (replies?.data?.children) {
+              extractComments(replies.data.children, depth + 1);
+            }
+          }
+        }
+      }
+
+      extractComments(data[1]?.data?.children || []);
+
+      res.json({
+        thread: {
+          title: postData.title,
+          body: postData.selftext || "",
+          author: postData.author,
+          subreddit: postData.subreddit,
+          url: `https://reddit.com${postData.permalink}`,
+          upvotes: postData.ups || 0,
+          num_comments: postData.num_comments || 0,
+          created_utc: postData.created_utc,
+        },
+        comments,
+      });
+    } catch (err) {
+      console.error("[fetch-thread] Error:", err);
+      res.status(500).json({ error: "Failed to fetch thread from Reddit" });
+    }
+  });
+
   app.listen(PORT, () => {
     console.log(`[worker] Health server listening on port ${PORT}`);
   });
