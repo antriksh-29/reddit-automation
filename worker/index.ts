@@ -176,26 +176,87 @@ async function main() {
     }
 
     try {
-      // Reddit blocks ALL cloud IPs (Vercel, Railway, AWS) from their API.
-      // We accept any valid subreddit name and validate asynchronously:
-      // - The scanner will attempt to fetch posts on the next cycle
-      // - If the subreddit doesn't exist (302), it gets marked as 'not_found'
-      // - Basic name format validation is done above (alphanumeric + underscore)
-      //
-      // This is the only reliable approach without Reddit OAuth credentials.
-      // Once we have OAuth, we can do real-time validation.
+      // Use the SAME fetch approach as the scanner (which works from Railway).
+      // Key: same User-Agent, same endpoint format, same rate-limited approach.
+      const fetchUrl = `https://api.reddit.com/r/${cleanName}/new.json?limit=1&raw_json=1`;
+      console.log(`[validate] Fetching: ${fetchUrl}`);
+
+      const redditRes = await fetch(fetchUrl, {
+        headers: { "User-Agent": "Arete/1.0 (Reddit Lead Intelligence)" },
+        redirect: "manual",
+        signal: AbortSignal.timeout(10000),
+      });
+
+      console.log(`[validate] Response: HTTP ${redditRes.status}, content-type: ${redditRes.headers.get("content-type")}`);
+
+      // 302 = non-existent (redirect to search)
+      if (redditRes.status === 302 || redditRes.status === 301) {
+        res.json({ valid: false, reason: `r/${cleanName} does not exist. Please check the spelling.` });
+        return;
+      }
+
+      // 404 = banned or removed
+      if (redditRes.status === 404) {
+        res.json({ valid: false, reason: `r/${cleanName} has been banned or removed by Reddit.` });
+        return;
+      }
+
+      // 403 = could be IP block (HTML) or actual restriction (JSON)
+      if (redditRes.status === 403) {
+        const contentType = redditRes.headers.get("content-type") || "";
+        if (contentType.includes("text/html")) {
+          // IP block — accept the subreddit anyway, scanner will validate async
+          console.warn(`[validate] IP blocked for r/${cleanName} — accepting with async validation`);
+          res.json({
+            valid: true,
+            subreddit: { name: cleanName, subscribers: 0, description: "" },
+          });
+          return;
+        }
+        // Actual restriction
+        let restrictReason = "restricted";
+        try {
+          const b = await redditRes.json();
+          if (b?.reason === "quarantined") restrictReason = "quarantined";
+          if (b?.reason === "private") restrictReason = "private";
+        } catch {}
+        res.json({ valid: false, reason: `r/${cleanName} is ${restrictReason} and cannot be monitored.` });
+        return;
+      }
+
+      if (!redditRes.ok) {
+        // Unknown error — accept anyway, let scanner validate
+        console.warn(`[validate] HTTP ${redditRes.status} for r/${cleanName} — accepting with async validation`);
+        res.json({
+          valid: true,
+          subreddit: { name: cleanName, subscribers: 0, description: "" },
+        });
+        return;
+      }
+
+      const data = await redditRes.json();
+      if (data?.kind !== "Listing") {
+        res.json({ valid: false, reason: `r/${cleanName} does not exist.` });
+        return;
+      }
+
+      // Success — subreddit exists
+      const children = data?.data?.children || [];
+      const displayName = children.length > 0
+        ? children[0]?.data?.subreddit || cleanName
+        : cleanName;
 
       res.json({
         valid: true,
-        subreddit: {
-          name: cleanName,
-          subscribers: 0,
-          description: "",
-        },
+        subreddit: { name: displayName, subscribers: 0, description: "" },
       });
     } catch (err) {
-      console.error(`[worker] Subreddit validation failed for ${cleanName}:`, err);
-      res.json({ valid: false, reason: "Could not verify subreddit. Please try again." });
+      // Network error — accept anyway, let scanner validate async
+      console.error(`[worker] Subreddit validation error for ${cleanName}:`, err);
+      res.json({
+        valid: true,
+        subreddit: { name: cleanName, subscribers: 0, description: "" },
+      });
     }
   });
 
