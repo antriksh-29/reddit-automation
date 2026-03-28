@@ -28,7 +28,12 @@ import {
 
 const PORT = Number(process.env.PORT) || 3001;
 const SCAN_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
-const WEBHOOK_SECRET = process.env.WORKER_WEBHOOK_SECRET || "dev-secret";
+const WEBHOOK_SECRET = process.env.WORKER_WEBHOOK_SECRET;
+if (!WEBHOOK_SECRET && process.env.NODE_ENV === "production") {
+  console.error("[worker] FATAL: WORKER_WEBHOOK_SECRET is not set in production");
+  process.exit(1);
+}
+const effectiveSecret = WEBHOOK_SECRET || "dev-secret-local-only";
 
 const startedAt = new Date();
 
@@ -83,7 +88,7 @@ async function main() {
   // Scan-now webhook (triggered from Vercel after onboarding)
   app.post("/scan-now", (req, res) => {
     const authHeader = req.headers.authorization;
-    if (authHeader !== `Bearer ${WEBHOOK_SECRET}`) {
+    if (authHeader !== `Bearer ${effectiveSecret}`) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
@@ -103,7 +108,7 @@ async function main() {
   // Generate embeddings webhook (triggered from onboarding complete)
   app.post("/generate-embeddings", async (req, res) => {
     const authHeader = req.headers.authorization;
-    if (authHeader !== `Bearer ${WEBHOOK_SECRET}`) {
+    if (authHeader !== `Bearer ${effectiveSecret}`) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
@@ -126,7 +131,7 @@ async function main() {
   // First scan SSE endpoint (called from onboarding setup page)
   app.post("/first-scan", (req, res) => {
     const authHeader = req.headers.authorization;
-    if (authHeader !== `Bearer ${WEBHOOK_SECRET}`) {
+    if (authHeader !== `Bearer ${effectiveSecret}`) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }

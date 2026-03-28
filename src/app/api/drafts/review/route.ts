@@ -48,6 +48,7 @@ export async function POST(request: NextRequest) {
     .from("alerts")
     .select("*, monitored_subreddits!inner(subreddit_name)")
     .eq("id", alert_id)
+    .eq("business_id", business.id)
     .single();
 
   if (!alert) return NextResponse.json({ error: "Alert not found" }, { status: 404 });

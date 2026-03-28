@@ -55,6 +55,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "URL is required" }, { status: 400 });
   }
 
+  // SSRF protection: only allow http/https, block private/internal IPs
+  try {
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return NextResponse.json({ error: "Only HTTP/HTTPS URLs are allowed" }, { status: 400 });
+    }
+    const hostname = parsed.hostname.toLowerCase();
+    if (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "0.0.0.0" ||
+      hostname.startsWith("10.") ||
+      hostname.startsWith("172.") ||
+      hostname.startsWith("192.168.") ||
+      hostname.startsWith("169.254.") ||
+      hostname.endsWith(".internal") ||
+      hostname.endsWith(".local")
+    ) {
+      return NextResponse.json({ error: "Internal/private URLs are not allowed" }, { status: 400 });
+    }
+  } catch {
+    return NextResponse.json({ error: "Invalid URL format" }, { status: 400 });
+  }
+
   try {
     // Fetch the website content
     const response = await fetch(url, {

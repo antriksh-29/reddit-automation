@@ -87,7 +87,7 @@ export async function PATCH(request: NextRequest) {
       })
       .eq("id", business.id);
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return NextResponse.json({ error: "Operation failed. Please try again." }, { status: 500 });
     return NextResponse.json({ ok: true });
   }
 
@@ -98,14 +98,14 @@ export async function PATCH(request: NextRequest) {
       .insert({ business_id: business.id, name, source: "manual" })
       .select("id")
       .single();
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return NextResponse.json({ error: "Operation failed. Please try again." }, { status: 500 });
     return NextResponse.json({ ok: true, competitor });
   }
 
   if (section === "remove_competitor") {
     const { competitor_id } = body;
-    const { error } = await admin.from("competitors").delete().eq("id", competitor_id);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    const { error } = await admin.from("competitors").delete().eq("id", competitor_id).eq("business_id", business.id);
+    if (error) return NextResponse.json({ error: "Operation failed. Please try again." }, { status: 500 });
     return NextResponse.json({ ok: true });
   }
 
@@ -126,7 +126,7 @@ export async function PATCH(request: NextRequest) {
           .from("monitored_subreddits")
           .update({ is_active: true, status: "active" })
           .eq("id", existing[0].id);
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        if (error) return NextResponse.json({ error: "Operation failed. Please try again." }, { status: 500 });
         return NextResponse.json({ ok: true, subreddit: { id: existing[0].id } });
       }
       return NextResponse.json({ error: "Subreddit already monitored" }, { status: 409 });
@@ -137,7 +137,7 @@ export async function PATCH(request: NextRequest) {
       .insert({ business_id: business.id, subreddit_name: name, source: "manual" })
       .select("id")
       .single();
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return NextResponse.json({ error: "Operation failed. Please try again." }, { status: 500 });
     return NextResponse.json({ ok: true, subreddit });
   }
 
@@ -146,8 +146,9 @@ export async function PATCH(request: NextRequest) {
     const { error } = await admin
       .from("monitored_subreddits")
       .update({ is_active: false })
-      .eq("id", subreddit_id);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      .eq("id", subreddit_id)
+      .eq("business_id", business.id);
+    if (error) return NextResponse.json({ error: "Operation failed. Please try again." }, { status: 500 });
     return NextResponse.json({ ok: true });
   }
 
@@ -162,7 +163,7 @@ export async function PATCH(request: NextRequest) {
         },
       })
       .eq("id", user.id);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return NextResponse.json({ error: "Operation failed. Please try again." }, { status: 500 });
     return NextResponse.json({ ok: true });
   }
 

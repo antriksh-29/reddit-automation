@@ -54,7 +54,9 @@ export async function fetchNewPosts(
   options: { limit?: number; after?: string | null } = {}
 ): Promise<{ posts: RedditPost[]; after: string | null }> {
   const limit = options.limit || 25;
-  let url = `https://www.reddit.com/r/${subredditName}/new.json?limit=${limit}&raw_json=1`;
+  // Sanitize subreddit name to prevent path traversal
+  const safeName = encodeURIComponent(subredditName.replace(/[^a-zA-Z0-9_]/g, ""));
+  let url = `https://www.reddit.com/r/${safeName}/new.json?limit=${limit}&raw_json=1`;
   if (options.after) {
     url += `&after=${options.after}`;
   }

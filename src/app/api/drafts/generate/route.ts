@@ -44,6 +44,7 @@ export async function POST(request: NextRequest) {
     .from("alerts")
     .select("*")
     .eq("id", alert_id)
+    .eq("business_id", business.id)
     .single();
 
   if (!alert || alertError) {
@@ -268,10 +269,19 @@ export async function PATCH(request: NextRequest) {
   const { draft_id } = await request.json();
 
   // Get existing draft (separate queries to avoid RLS join issues)
+  // Get business for IDOR protection
+  const { data: business } = await supabase
+    .from("businesses")
+    .select("id")
+    .eq("user_id", user.id)
+    .single();
+  if (!business) return NextResponse.json({ error: "No business found" }, { status: 404 });
+
   const { data: existingDraft } = await supabase
     .from("comment_drafts")
     .select("*")
     .eq("id", draft_id)
+    .eq("business_id", business.id)
     .single();
 
   if (!existingDraft) return NextResponse.json({ error: "Draft not found" }, { status: 404 });

@@ -199,6 +199,7 @@ export async function runScanCycle(): Promise<ScanMetrics> {
       source: "cron",
     });
   } finally {
+    pendingEmails.clear(); // Always clear to prevent stale emails on error
     metrics.completedAt = new Date();
     scanInProgress = false;
     lastScanTime = new Date();
@@ -250,18 +251,9 @@ async function scanSubreddit(subName: string, metrics: ScanMetrics): Promise<voi
 
   if (newPosts.length === 0) return;
 
-  // Process each post against each user
+  // Process each post against each user (dedup is per-business, not global)
   for (const post of newPosts) {
-    // Dedup: check if alert already exists for this post
-    const { data: existing } = await supabase
-      .from("alerts")
-      .select("id")
-      .eq("reddit_post_id", post.id)
-      .limit(1);
-
-    if (existing && existing.length > 0) continue;
-
-    // Score against each eligible user
+    // Score against each eligible user — dedup happens inside scoreAndAlert per-business
     await Promise.allSettled(
       users.map((user) => scoreAndAlert(post, user, metrics))
     );
@@ -346,6 +338,7 @@ async function getEligibleUsers(subName: string): Promise<EligibleUser[]> {
       const business = row.businesses as unknown as {
         id: string;
         user_id: string;
+        name: string;
         description: string;
         icp_description: string;
         keywords: { primary: string[]; discovery: string[] };
@@ -379,6 +372,16 @@ async function scoreAndAlert(
   user: EligibleUser,
   metrics: ScanMetrics
 ): Promise<void> {
+  // Per-business dedup: skip if this user already has an alert for this post
+  const { data: existingAlert } = await supabase
+    .from("alerts")
+    .select("id")
+    .eq("reddit_post_id", post.id)
+    .eq("business_id", user.business_id)
+    .limit(1);
+
+  if (existingAlert && existingAlert.length > 0) return;
+
   // Fetch competitors for this user
   const { data: comps } = await supabase
     .from("competitors")

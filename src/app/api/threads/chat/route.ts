@@ -31,21 +31,23 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "thread_analysis_id and message required" }, { status: 400 });
   }
 
+  // Get business context
+  const { data: business } = await supabase
+    .from("businesses")
+    .select("id, description, icp_description, keywords")
+    .eq("user_id", user.id)
+    .single();
+  if (!business) return NextResponse.json({ error: "No business found" }, { status: 404 });
+
   // Get the thread analysis
   const { data: analysis } = await supabase
     .from("thread_analyses")
     .select("*")
     .eq("id", thread_analysis_id)
+    .eq("business_id", business.id)
     .single();
 
   if (!analysis) return NextResponse.json({ error: "Analysis not found" }, { status: 404 });
-
-  // Get business context
-  const { data: business } = await supabase
-    .from("businesses")
-    .select("description, icp_description, keywords")
-    .eq("id", analysis.business_id)
-    .single();
 
   // Get previous chat messages for context
   const { data: prevMessages } = await supabase

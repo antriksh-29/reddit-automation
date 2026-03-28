@@ -62,8 +62,8 @@ export async function GET(request: NextRequest) {
   const category = params.get("category") || "all";
   const subreddit = params.get("subreddit") || "all";
   const sort = params.get("sort") || "priority";
-  const limit = parseInt(params.get("limit") || "50");
-  const offset = parseInt(params.get("offset") || "0");
+  const limit = Math.min(Math.max(parseInt(params.get("limit") || "50") || 50, 1), 200);
+  const offset = Math.max(parseInt(params.get("offset") || "0") || 0, 0);
 
   let query = supabase
     .from("alerts")
@@ -100,7 +100,7 @@ export async function GET(request: NextRequest) {
   const { data: alerts, error } = await query;
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "Failed to load alerts. Please try again." }, { status: 500 });
   }
 
   // Flatten subreddit name
@@ -135,14 +135,26 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "alert_ids required" }, { status: 400 });
   }
 
+  // Get business for IDOR protection
+  const { data: business } = await supabase
+    .from("businesses")
+    .select("id")
+    .eq("user_id", user.id)
+    .single();
+
+  if (!business) {
+    return NextResponse.json({ error: "No business found" }, { status: 404 });
+  }
+
   const { error } = await supabase
     .from("alerts")
     .update({ is_seen: true, seen_at: new Date().toISOString() })
     .in("id", alert_ids)
+    .eq("business_id", business.id)
     .eq("is_seen", false);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "Failed to load alerts. Please try again." }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true });
