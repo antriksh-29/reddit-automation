@@ -150,8 +150,9 @@ async function fetchRedditThread(url: string): Promise<RedditThread | null> {
 
   // Normalize URL
   cleanUrl = cleanUrl.replace(/\/$/, "");
-  cleanUrl = cleanUrl.replace("://reddit.com", "://www.reddit.com");
-  cleanUrl = cleanUrl.replace("://old.reddit.com", "://www.reddit.com");
+  cleanUrl = cleanUrl.replace("://www.reddit.com", "://api.reddit.com");
+  cleanUrl = cleanUrl.replace("://reddit.com", "://api.reddit.com");
+  cleanUrl = cleanUrl.replace("://old.reddit.com", "://api.reddit.com");
 
   // Validate it's a Reddit post URL
   if (!cleanUrl.includes("reddit.com/r/")) return null;

@@ -112,7 +112,7 @@ export async function runFirstScan(userId: string, res: Response): Promise<void>
       });
 
       try {
-        const url = `https://www.reddit.com/r/${sub.subreddit_name}/new.json?limit=25&raw_json=1`;
+        const url = `https://api.reddit.com/r/${sub.subreddit_name}/new.json?limit=25&raw_json=1`;
         const fetchRes = await fetch(url, {
           headers: { "User-Agent": USER_AGENT },
           redirect: "manual",

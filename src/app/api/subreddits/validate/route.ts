@@ -3,13 +3,14 @@ import { NextResponse } from "next/server";
 
 /**
  * Validate that a subreddit exists on Reddit.
- * Uses Reddit's public JSON API (no OAuth needed).
+ * Uses api.reddit.com (not www.reddit.com) because Reddit blocks
+ * Vercel/cloud IPs on www.reddit.com with 403 responses.
  *
- * Reddit API response codes:
+ * api.reddit.com response codes:
  *   302 → non-existent subreddit (redirects to search)
- *   404 → banned or removed subreddit
- *   403 → quarantined or private (body has "reason" field)
- *   200 → exists (check kind="t5" and data.over18)
+ *   404 → banned or removed (body: {"reason": "banned"})
+ *   403 → quarantined or private (body: {"reason": "quarantined"/"private"})
+ *   200 → exists (kind="t5" with subreddit data)
  */
 export async function POST(request: Request) {
   const supabase = await createServerSupabaseClient();
@@ -37,42 +38,18 @@ export async function POST(request: Request) {
   }
 
   try {
-    // Try multiple User-Agent strings — Reddit blocks some cloud IPs with generic UAs
-    const userAgents = [
-      "Mozilla/5.0 (compatible; AreteBot/1.0; +https://getarete.co)",
-      "Arete/1.0 (subreddit-validation; contact: antriksh@getarete.co)",
-    ];
-
-    let response: Response | null = null;
-    for (const ua of userAgents) {
-      response = await fetch(
-        `https://www.reddit.com/r/${cleanName}/about.json`,
-        {
-          headers: {
-            "User-Agent": ua,
-            "Accept": "application/json",
-          },
-          redirect: "manual",
-          signal: AbortSignal.timeout(8000),
-        }
-      );
-      // If we got a real response (not 403 from IP block), use it
-      if (response.status !== 403) break;
-      // For 403, check if it's a real restriction vs IP block
-      try {
-        const body403 = await response.clone().json();
-        if (body403?.reason === "quarantined" || body403?.reason === "private") break; // Real restriction
-      } catch {
-        // 403 without JSON body = likely IP block, try next UA
+    // Use api.reddit.com — it works from cloud IPs where www.reddit.com returns 403
+    const response = await fetch(
+      `https://api.reddit.com/r/${cleanName}/about`,
+      {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; AreteBot/1.0; +https://getarete.co)",
+          "Accept": "application/json",
+        },
+        redirect: "manual",
+        signal: AbortSignal.timeout(10000),
       }
-    }
-
-    if (!response) {
-      return NextResponse.json({
-        valid: false,
-        reason: "Could not reach Reddit. Please try again.",
-      });
-    }
+    );
 
     // 302/301 = Reddit redirects to search → subreddit does not exist
     if (response.status === 302 || response.status === 301) {
@@ -82,69 +59,30 @@ export async function POST(request: Request) {
       });
     }
 
-    // 404 = subreddit has been banned or permanently removed by Reddit
+    // 404 = subreddit has been banned or permanently removed
     if (response.status === 404) {
+      let banReason = "banned or removed";
+      try {
+        const body = await response.json();
+        if (body?.reason) banReason = body.reason;
+      } catch {}
       return NextResponse.json({
         valid: false,
-        reason: `r/${cleanName} has been banned or removed by Reddit and cannot be monitored.`,
+        reason: `r/${cleanName} has been ${banReason} by Reddit and cannot be monitored.`,
       });
     }
 
-    // 403 = quarantined, private, or IP-blocked by Reddit
+    // 403 = quarantined or private
     if (response.status === 403) {
-      // Try to parse the body to distinguish quarantined vs private
+      let restrictReason = "restricted";
       try {
         const body = await response.json();
-        if (body?.reason === "quarantined") {
-          return NextResponse.json({
-            valid: false,
-            reason: `r/${cleanName} is quarantined by Reddit. Quarantined subreddits cannot be monitored.`,
-          });
-        }
-        if (body?.reason === "private") {
-          return NextResponse.json({
-            valid: false,
-            reason: `r/${cleanName} is a private subreddit. Private subreddits cannot be monitored.`,
-          });
-        }
-      } catch {
-        // Could not parse body — likely an IP block, not a real restriction
-      }
-
-      // Fallback: try fetching /new.json to see if the subreddit is actually readable
-      try {
-        const fallbackRes = await fetch(
-          `https://www.reddit.com/r/${cleanName}/new.json?limit=1`,
-          {
-            headers: {
-              "User-Agent": "Mozilla/5.0 (compatible; AreteBot/1.0; +https://getarete.co)",
-              "Accept": "application/json",
-            },
-            redirect: "manual",
-            signal: AbortSignal.timeout(8000),
-          }
-        );
-        if (fallbackRes.ok) {
-          const fallbackData = await fallbackRes.json();
-          if (fallbackData?.data?.children?.length >= 0) {
-            // Subreddit is readable — the 403 was an IP block on /about.json
-            return NextResponse.json({
-              valid: true,
-              subreddit: {
-                name: cleanName,
-                subscribers: 0,
-                description: "",
-              },
-            });
-          }
-        }
-      } catch {
-        // Fallback also failed
-      }
-
+        if (body?.reason === "quarantined") restrictReason = "quarantined";
+        if (body?.reason === "private") restrictReason = "private";
+      } catch {}
       return NextResponse.json({
         valid: false,
-        reason: `r/${cleanName} is restricted and cannot be monitored. It may be private or quarantined.`,
+        reason: `r/${cleanName} is ${restrictReason} by Reddit and cannot be monitored.`,
       });
     }
 
@@ -160,7 +98,7 @@ export async function POST(request: Request) {
     if (!response.ok) {
       return NextResponse.json({
         valid: false,
-        reason: `Could not verify r/${cleanName}. Reddit returned an unexpected response. Please try again.`,
+        reason: `Could not verify r/${cleanName}. Reddit returned status ${response.status}. Please try again.`,
       });
     }
 
@@ -176,7 +114,7 @@ export async function POST(request: Request) {
       });
     }
 
-    // NSFW check — block NSFW subreddits
+    // NSFW check
     if (sub.over18) {
       return NextResponse.json({
         valid: false,
@@ -192,10 +130,11 @@ export async function POST(request: Request) {
         description: sub.public_description || "",
       },
     });
-  } catch {
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown";
     return NextResponse.json({
       valid: false,
-      reason: "Could not reach Reddit to verify this subreddit. Please check your connection and try again.",
+      reason: `Could not reach Reddit to verify this subreddit (${message}). Please try again.`,
     });
   }
 }
