@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+/*
+ * Design System Tokens — from DESIGN-SYSTEM.md
+ * All color, spacing, and typography decisions live here.
+ */
+
+:root {
+  --bg-primary: #111111;
+  --bg-surface: #1A1A1A;
+  --bg-elevated: #222222;
+  --bg-hover: #2C2C2C;
+
+  --accent: #E8651A;
+  --accent-hover: #F57A33;
+  --accent-muted: rgba(232, 101, 26, 0.15);
+
+  --text-primary: #FFFFFF;
+  --text-secondary: #C0C0BD;
+  --text-muted: #888885;
+
+  --border-default: #2A2A2A;
+  --border-hover: #3A3A3A;
+
+  --success: #22C55E;
+  --warning: #F59E0B;
+  --error: #EF4444;
+  --info: #3B82F6;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  --duration-short: 150ms;
+  --duration-medium: 250ms;
+
+  --font-display: 'Satoshi', system-ui, sans-serif;
+  --font-body: 'DM Sans', system-ui, sans-serif;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  /* NOTE: antialiased removed intentionally — it dims white text on dark backgrounds
+     on macOS, making #FFFFFF appear as ~#A9A9A9. auto lets the OS render at full brightness. */
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: var(--radius-full);
+}
+
+*:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
