@@ -75,11 +75,36 @@ export function getLastScanMetrics(): ScanMetrics | null {
 
 /**
  * Run a full scan cycle across all active subreddits.
+ * Uses DB-level last-scan check to prevent duplicate scans across instances.
  */
 export async function runScanCycle(): Promise<ScanMetrics> {
   if (scanInProgress) {
     console.log("[scanner] Skipping — previous scan still running");
     return lastScanMetrics!;
+  }
+
+  // DB-level guard: check last scan.cycle_completed event timestamp
+  // Prevents double-scanning when Railway runs two instances during deploys
+  const MIN_SCAN_GAP_MS = 25 * 60 * 1000; // 25 minutes minimum between scans
+  const { data: lastScanEvent } = await supabase
+    .from("event_logs")
+    .select("created_at")
+    .eq("event_type", "scan.cycle_completed")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single();
+
+  if (lastScanEvent) {
+    const lastScanAge = Date.now() - new Date(lastScanEvent.created_at).getTime();
+    if (lastScanAge < MIN_SCAN_GAP_MS) {
+      const minsAgo = Math.round(lastScanAge / 60000);
+      console.log(`[scanner] Skipping — last scan was ${minsAgo} min ago (min gap: 25 min)`);
+      return lastScanMetrics || {
+        startedAt: new Date(), completedAt: new Date(),
+        subredditsScanned: 0, postsFetched: 0, postsPassedPass1: 0,
+        postsPassedPass2: 0, alertsCreated: 0, errors: 0, aborted: false,
+      };
+    }
   }
 
   scanInProgress = true;
