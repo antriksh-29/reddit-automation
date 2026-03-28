@@ -3,20 +3,159 @@ import { NextResponse } from "next/server";
 
 /**
  * Validate that a subreddit exists on Reddit.
- * Uses api.reddit.com (not www.reddit.com) because Reddit blocks
- * Vercel/cloud IPs on www.reddit.com with 403 responses.
  *
- * api.reddit.com response codes:
- *   302 → non-existent subreddit (redirects to search)
- *   404 → banned or removed (body: {"reason": "banned"})
- *   403 → quarantined or private (body: {"reason": "quarantined"/"private"})
- *   200 → exists (kind="t5" with subreddit data)
+ * Uses a multi-fallback strategy because Reddit aggressively blocks
+ * cloud/Vercel IPs with 403 responses:
+ *
+ * 1. Try api.reddit.com/r/{name}/about (fastest, works from some IPs)
+ * 2. Try old.reddit.com/r/{name}/about.json (less restrictive)
+ * 3. Try Reddit search API as final fallback (most reliable from cloud IPs)
+ *
+ * Response codes from Reddit:
+ *   302 → non-existent (redirects to search)
+ *   404 → banned or removed
+ *   403 → IP block OR quarantined/private (we distinguish using fallbacks)
+ *   200 → exists
  */
+
+const BROWSER_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+interface SubredditResult {
+  valid: boolean;
+  name?: string;
+  subscribers?: number;
+  description?: string;
+  reason?: string;
+}
+
+/** Attempt 1: api.reddit.com */
+async function tryApiReddit(name: string): Promise<SubredditResult | null> {
+  try {
+    const res = await fetch(`https://api.reddit.com/r/${name}/about`, {
+      headers: { "User-Agent": BROWSER_UA, Accept: "application/json" },
+      redirect: "manual",
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (res.status === 302 || res.status === 301) {
+      return { valid: false, reason: `r/${name} does not exist. Please check the spelling.` };
+    }
+    if (res.status === 404) {
+      let detail = "banned or removed";
+      try { const b = await res.json(); if (b?.reason) detail = b.reason; } catch {}
+      return { valid: false, reason: `r/${name} has been ${detail} by Reddit and cannot be monitored.` };
+    }
+    if (res.status === 403) {
+      // Could be IP block OR actually quarantined/private — check body
+      try {
+        const b = await res.json();
+        if (b?.reason === "quarantined") return { valid: false, reason: `r/${name} is quarantined by Reddit and cannot be monitored.` };
+        if (b?.reason === "private") return { valid: false, reason: `r/${name} is a private subreddit and cannot be monitored.` };
+      } catch {}
+      // No reason field → likely IP block, try fallback
+      return null;
+    }
+    if (res.status === 429) return null; // Rate limited, try fallback
+    if (!res.ok) return null; // Unknown error, try fallback
+
+    const data = await res.json();
+    if (data?.kind !== "t5" || !data?.data) return null;
+
+    const sub = data.data;
+    if (sub.over18) return { valid: false, reason: `r/${name} is an NSFW subreddit and cannot be monitored.` };
+
+    return { valid: true, name: sub.display_name || name, subscribers: sub.subscribers || 0, description: sub.public_description || "" };
+  } catch {
+    return null; // Timeout or network error, try fallback
+  }
+}
+
+/** Attempt 2: old.reddit.com */
+async function tryOldReddit(name: string): Promise<SubredditResult | null> {
+  try {
+    const res = await fetch(`https://old.reddit.com/r/${name}/about.json`, {
+      headers: { "User-Agent": BROWSER_UA },
+      redirect: "manual",
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (res.status === 302 || res.status === 301) {
+      return { valid: false, reason: `r/${name} does not exist. Please check the spelling.` };
+    }
+    if (res.status === 404) {
+      return { valid: false, reason: `r/${name} has been banned or removed by Reddit.` };
+    }
+    if (res.status === 403) {
+      try {
+        const b = await res.json();
+        if (b?.reason === "quarantined") return { valid: false, reason: `r/${name} is quarantined by Reddit and cannot be monitored.` };
+        if (b?.reason === "private") return { valid: false, reason: `r/${name} is a private subreddit and cannot be monitored.` };
+      } catch {}
+      return null; // IP block, try search fallback
+    }
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    if (data?.kind !== "t5" || !data?.data) return null;
+
+    const sub = data.data;
+    if (sub.over18) return { valid: false, reason: `r/${name} is an NSFW subreddit and cannot be monitored.` };
+
+    return { valid: true, name: sub.display_name || name, subscribers: sub.subscribers || 0, description: sub.public_description || "" };
+  } catch {
+    return null;
+  }
+}
+
+/** Attempt 3: Reddit search API (most reliable from cloud IPs) */
+async function trySearchApi(name: string): Promise<SubredditResult | null> {
+  try {
+    const res = await fetch(
+      `https://www.reddit.com/subreddits/search.json?q=${encodeURIComponent(name)}&limit=5&raw_json=1`,
+      {
+        headers: { "User-Agent": BROWSER_UA },
+        redirect: "manual",
+        signal: AbortSignal.timeout(8000),
+      }
+    );
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    const children = data?.data?.children || [];
+
+    // Look for exact name match (case-insensitive)
+    const match = children.find(
+      (c: { data: { display_name: string } }) =>
+        c.data.display_name.toLowerCase() === name.toLowerCase()
+    );
+
+    if (!match) {
+      // No exact match found — subreddit doesn't exist
+      return { valid: false, reason: `r/${name} does not exist. Please check the spelling.` };
+    }
+
+    const sub = match.data;
+
+    if (sub.over18) return { valid: false, reason: `r/${name} is an NSFW subreddit and cannot be monitored.` };
+    if (sub.quarantine) return { valid: false, reason: `r/${name} is quarantined by Reddit and cannot be monitored.` };
+    if (sub.subreddit_type === "private") return { valid: false, reason: `r/${name} is a private subreddit and cannot be monitored.` };
+
+    return {
+      valid: true,
+      name: sub.display_name || name,
+      subscribers: sub.subscribers || 0,
+      description: sub.public_description || "",
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(request: Request) {
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -37,104 +176,30 @@ export async function POST(request: Request) {
     });
   }
 
-  try {
-    // Use api.reddit.com — it works from cloud IPs where www.reddit.com returns 403
-    const response = await fetch(
-      `https://api.reddit.com/r/${cleanName}/about`,
-      {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (compatible; AreteBot/1.0; +https://getarete.co)",
-          "Accept": "application/json",
+  // Try each method in order — return first definitive result
+  const result =
+    (await tryApiReddit(cleanName)) ??
+    (await tryOldReddit(cleanName)) ??
+    (await trySearchApi(cleanName));
+
+  if (result) {
+    if (result.valid) {
+      return NextResponse.json({
+        valid: true,
+        subreddit: {
+          name: result.name,
+          subscribers: result.subscribers,
+          description: result.description,
         },
-        redirect: "manual",
-        signal: AbortSignal.timeout(10000),
-      }
-    );
-
-    // 302/301 = Reddit redirects to search → subreddit does not exist
-    if (response.status === 302 || response.status === 301) {
-      return NextResponse.json({
-        valid: false,
-        reason: `r/${cleanName} does not exist. Please check the spelling and try again.`,
       });
+    } else {
+      return NextResponse.json({ valid: false, reason: result.reason });
     }
-
-    // 404 = subreddit has been banned or permanently removed
-    if (response.status === 404) {
-      let banReason = "banned or removed";
-      try {
-        const body = await response.json();
-        if (body?.reason) banReason = body.reason;
-      } catch {}
-      return NextResponse.json({
-        valid: false,
-        reason: `r/${cleanName} has been ${banReason} by Reddit and cannot be monitored.`,
-      });
-    }
-
-    // 403 = quarantined or private
-    if (response.status === 403) {
-      let restrictReason = "restricted";
-      try {
-        const body = await response.json();
-        if (body?.reason === "quarantined") restrictReason = "quarantined";
-        if (body?.reason === "private") restrictReason = "private";
-      } catch {}
-      return NextResponse.json({
-        valid: false,
-        reason: `r/${cleanName} is ${restrictReason} by Reddit and cannot be monitored.`,
-      });
-    }
-
-    // 429 = rate limited
-    if (response.status === 429) {
-      return NextResponse.json({
-        valid: false,
-        reason: "Reddit is temporarily rate-limiting our requests. Please wait a moment and try again.",
-      });
-    }
-
-    // Other non-200 codes
-    if (!response.ok) {
-      return NextResponse.json({
-        valid: false,
-        reason: `Could not verify r/${cleanName}. Reddit returned status ${response.status}. Please try again.`,
-      });
-    }
-
-    // 200 — parse the response
-    const data = await response.json();
-    const sub = data?.data;
-
-    // Reddit sometimes returns 200 with a different kind for non-existent subs
-    if (!sub || data?.kind !== "t5") {
-      return NextResponse.json({
-        valid: false,
-        reason: `r/${cleanName} does not exist. Please check the spelling and try again.`,
-      });
-    }
-
-    // NSFW check
-    if (sub.over18) {
-      return NextResponse.json({
-        valid: false,
-        reason: `r/${cleanName} is an NSFW subreddit and cannot be monitored on this platform.`,
-      });
-    }
-
-    return NextResponse.json({
-      valid: true,
-      subreddit: {
-        name: sub.display_name || cleanName,
-        subscribers: sub.subscribers || 0,
-        description: sub.public_description || "",
-      },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "unknown";
-    return NextResponse.json({
-      valid: false,
-      reason: `Could not reach Reddit to verify this subreddit (${message}). Please try again.`,
-    });
   }
+
+  // All methods failed — Reddit is completely blocking us
+  return NextResponse.json({
+    valid: false,
+    reason: "Could not verify this subreddit right now. Reddit may be temporarily blocking our requests. Please try again in a few minutes.",
+  });
 }
