@@ -177,15 +177,20 @@ async function main() {
 
     try {
       // Use /new.json?limit=1 — same endpoint the scanner uses successfully from Railway.
-      // Reddit blocks /about and /about.json from cloud IPs but /new.json works.
-      const redditRes = await fetch(
-        `https://api.reddit.com/r/${cleanName}/new.json?limit=1&raw_json=1`,
-        {
-          headers: { "User-Agent": "Arete/1.0 (Reddit Lead Intelligence)" },
-          redirect: "manual",
-          signal: AbortSignal.timeout(10000),
-        }
-      );
+      const fetchUrl = `https://api.reddit.com/r/${cleanName}/new.json?limit=1&raw_json=1`;
+      console.log(`[validate] Fetching: ${fetchUrl}`);
+      const redditRes = await fetch(fetchUrl, {
+        headers: { "User-Agent": "Arete/1.0 (Reddit Lead Intelligence)" },
+        redirect: "manual",
+        signal: AbortSignal.timeout(10000),
+      });
+      console.log(`[validate] Response: HTTP ${redditRes.status}, type=${redditRes.type}, headers=${JSON.stringify(Object.fromEntries(redditRes.headers.entries()))}`);
+
+      // If 403, try reading the body to understand why
+      if (redditRes.status === 403) {
+        const body = await redditRes.text();
+        console.log(`[validate] 403 body (first 500 chars): ${body.substring(0, 500)}`);
+      }
 
       // 302 = non-existent (redirect to search)
       if (redditRes.status === 302 || redditRes.status === 301) {
