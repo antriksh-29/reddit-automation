@@ -170,18 +170,24 @@ export async function runFirstScan(userId: string, res: Response): Promise<void>
       }
     }
 
+    // Sort filtered posts by Pass 1 score (highest first) and cap to top 15
+    // Remaining posts will be scored in the next regular 30-min scan cycle
+    const MAX_FIRST_SCAN_HAIKU = 15;
+    const scoredByPass1 = filtered.slice(0, MAX_FIRST_SCAN_HAIKU);
+    const deferred = filtered.length - scoredByPass1.length;
+
     sendSSE(res, "progress", {
       step: "scoring",
-      message: `${filtered.length} relevant posts found. AI is scoring them...`,
+      message: `${scoredByPass1.length} top posts found${deferred > 0 ? ` (+${deferred} queued for next scan)` : ""}. AI is scoring them...`,
       pct: 45,
     });
 
-    // 4. Pass 2: Haiku scoring (parallel)
-    const limiter = pLimit(5);
+    // 4. Pass 2: Haiku scoring (parallel, concurrency=10 for speed)
+    const limiter = pLimit(10);
     let scored = 0;
 
     const results = await Promise.allSettled(
-      filtered.map((post) =>
+      scoredByPass1.map((post) =>
         limiter(async () => {
           const prompt = promptTemplate
             .replace("{{business_description}}", business.description || "")
@@ -225,8 +231,8 @@ export async function runFirstScan(userId: string, res: Response): Promise<void>
             scored++;
             sendSSE(res, "progress", {
               step: "scoring",
-              message: `Scoring posts... (${scored}/${filtered.length})`,
-              pct: 45 + Math.round((scored / filtered.length) * 40),
+              message: `Scoring posts... (${scored}/${scoredByPass1.length})`,
+              pct: 45 + Math.round((scored / scoredByPass1.length) * 40),
             });
 
             // Priority calculation
