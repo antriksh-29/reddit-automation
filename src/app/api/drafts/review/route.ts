@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
   let rules = "No specific rules available.";
   try {
     const rulesRes = await fetch(
-      `https://www.reddit.com/r/${subredditName}/about/rules.json?raw_json=1`,
+      `https://api.reddit.com/r/${subredditName}/about/rules.json?raw_json=1`,
       { headers: { "User-Agent": "Arete/1.0" }, redirect: "manual" }
     );
     if (rulesRes.ok) {

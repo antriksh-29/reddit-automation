@@ -53,8 +53,9 @@ export async function POST(request: NextRequest) {
 
   // Fetch thread metadata from Reddit
   let cleanUrl = reddit_url.split("?")[0].split("#")[0].replace(/\/$/, "");
-  cleanUrl = cleanUrl.replace("://reddit.com", "://www.reddit.com");
-  cleanUrl = cleanUrl.replace("://old.reddit.com", "://www.reddit.com");
+  cleanUrl = cleanUrl.replace("://www.reddit.com", "://api.reddit.com");
+  cleanUrl = cleanUrl.replace("://reddit.com", "://api.reddit.com");
+  cleanUrl = cleanUrl.replace("://old.reddit.com", "://api.reddit.com");
 
   if (!cleanUrl.match(/reddit\.com\/r\/\w+\/comments\/\w+/)) {
     return NextResponse.json({ error: "Invalid Reddit post URL" }, { status: 400 });

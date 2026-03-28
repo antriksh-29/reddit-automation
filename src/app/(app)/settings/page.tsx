@@ -214,6 +214,7 @@ export default function SettingsPage() {
     setInlineError(null);
 
     try {
+      // Validate via API (proxies to Railway worker — Reddit blocks Vercel IPs)
       const valRes = await fetch("/api/subreddits/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

@@ -56,7 +56,7 @@ export async function fetchNewPosts(
   const limit = options.limit || 25;
   // Sanitize subreddit name to prevent path traversal
   const safeName = encodeURIComponent(subredditName.replace(/[^a-zA-Z0-9_]/g, ""));
-  let url = `https://www.reddit.com/r/${safeName}/new.json?limit=${limit}&raw_json=1`;
+  let url = `https://api.reddit.com/r/${safeName}/new.json?limit=${limit}&raw_json=1`;
   if (options.after) {
     url += `&after=${options.after}`;
   }
@@ -120,7 +120,7 @@ export async function fetchThreadComments(
   postId: string,
   subreddit: string
 ): Promise<{ comments: unknown[]; error?: string }> {
-  const url = `https://www.reddit.com/r/${subreddit}/comments/${postId}.json?raw_json=1&limit=100`;
+  const url = `https://api.reddit.com/r/${subreddit}/comments/${postId}.json?raw_json=1&limit=100`;
   const res = await rateLimitedFetch(url);
 
   if (!res.ok) {

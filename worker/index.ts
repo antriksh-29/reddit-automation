@@ -155,6 +155,90 @@ async function main() {
     });
   });
 
+  // Validate subreddit endpoint (proxied from Vercel — Reddit blocks Vercel IPs)
+  app.post("/validate-subreddit", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (authHeader !== `Bearer ${effectiveSecret}`) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    const { name } = req.body;
+    if (!name || typeof name !== "string") {
+      res.status(400).json({ valid: false, reason: "Subreddit name required" });
+      return;
+    }
+
+    const cleanName = name.replace(/^r\//, "").trim().toLowerCase();
+    if (!cleanName || !/^[a-zA-Z0-9_]+$/.test(cleanName)) {
+      res.json({ valid: false, reason: "Invalid subreddit name. Only letters, numbers, and underscores." });
+      return;
+    }
+
+    try {
+      const redditRes = await fetch(`https://www.reddit.com/r/${cleanName}/about.json?raw_json=1`, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; AreteBot/1.0; +https://getarete.co)" },
+        redirect: "manual",
+        signal: AbortSignal.timeout(10000),
+      });
+
+      // 302/301 = non-existent (redirect to search)
+      if (redditRes.status === 302 || redditRes.status === 301) {
+        res.json({ valid: false, reason: `r/${cleanName} does not exist. Please check the spelling.` });
+        return;
+      }
+
+      // 404 = banned
+      if (redditRes.status === 404) {
+        let detail = "banned or removed";
+        try { const b = await redditRes.json(); if (b?.reason) detail = b.reason; } catch {}
+        res.json({ valid: false, reason: `r/${cleanName} has been ${detail} by Reddit.` });
+        return;
+      }
+
+      // 403 = quarantined or private
+      if (redditRes.status === 403) {
+        let restrictReason = "restricted";
+        try {
+          const b = await redditRes.json();
+          if (b?.reason === "quarantined") restrictReason = "quarantined";
+          if (b?.reason === "private") restrictReason = "private";
+        } catch {}
+        res.json({ valid: false, reason: `r/${cleanName} is ${restrictReason} and cannot be monitored.` });
+        return;
+      }
+
+      if (!redditRes.ok) {
+        res.json({ valid: false, reason: `Could not verify r/${cleanName}. Reddit returned ${redditRes.status}.` });
+        return;
+      }
+
+      const data = await redditRes.json();
+      if (data?.kind !== "t5" || !data?.data) {
+        res.json({ valid: false, reason: `r/${cleanName} does not exist.` });
+        return;
+      }
+
+      const sub = data.data;
+      if (sub.over18) {
+        res.json({ valid: false, reason: `r/${cleanName} is NSFW and cannot be monitored.` });
+        return;
+      }
+
+      res.json({
+        valid: true,
+        subreddit: {
+          name: sub.display_name || cleanName,
+          subscribers: sub.subscribers || 0,
+          description: sub.public_description || "",
+        },
+      });
+    } catch (err) {
+      console.error(`[worker] Subreddit validation failed for ${cleanName}:`, err);
+      res.json({ valid: false, reason: "Could not reach Reddit. Please try again." });
+    }
+  });
+
   app.listen(PORT, () => {
     console.log(`[worker] Health server listening on port ${PORT}`);
   });
