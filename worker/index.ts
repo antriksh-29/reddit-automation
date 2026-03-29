@@ -83,6 +83,13 @@ async function main() {
           }
         : null,
       uptime_seconds: Math.floor((Date.now() - startedAt.getTime()) / 1000),
+      env_check: {
+        APP_URL: process.env.NEXT_PUBLIC_APP_URL || "(fallback: https://app.getarete.co)",
+        SES_FROM: process.env.SES_FROM_EMAIL || "(fallback: user-alerts@getarete.co)",
+        HAS_SUPABASE: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
+        HAS_ANTHROPIC: !!process.env.ANTHROPIC_API_KEY,
+        HAS_OPENAI: !!process.env.OPENAI_API_KEY,
+      },
     });
   });
 
