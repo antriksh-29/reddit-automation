@@ -167,18 +167,23 @@ export async function runScanCycle(): Promise<ScanMetrics> {
 
           if (sent) {
             // Mark all alerts in this batch as sent
-            const postUrls = alerts.map((a) => a.postUrl);
-            // Extract reddit_post_ids from URLs for matching
-            for (const alert of alerts) {
-              const postIdMatch = alert.postUrl.match(/comments\/([^/]+)/);
-              if (postIdMatch) {
+            // Extract reddit_post_ids from URLs — DB stores WITHOUT t3_ prefix
+            const { data: bizData } = await supabase.from("businesses").select("id").eq("user_id", userId).single();
+            const businessId = bizData?.id;
+
+            if (businessId) {
+              const postIds = alerts
+                .map((a) => {
+                  const m = a.postUrl.match(/comments\/([^/]+)/);
+                  return m ? m[1] : null;
+                })
+                .filter(Boolean) as string[];
+
+              if (postIds.length > 0) {
                 await supabase.from("alerts").update({
                   email_status: "sent",
                   email_sent_at: new Date().toISOString(),
-                }).eq("reddit_post_id", `t3_${postIdMatch[1]}`).eq("business_id",
-                  // Find business_id for this user
-                  (await supabase.from("businesses").select("id").eq("user_id", userId).single()).data?.id
-                );
+                }).in("reddit_post_id", postIds).eq("business_id", businessId);
               }
             }
 
