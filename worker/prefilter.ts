@@ -92,14 +92,15 @@ export async function prefilterPost(
   post: RedditPost,
   user: UserProfile
 ): Promise<PrefilterResult> {
-  const postText = `${post.title} ${post.selftext || ""}`.substring(0, 500);
+  const postBody = (post.selftext || "").substring(0, 1500);
+  const postText = `${post.title} ${postBody}`;
 
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-5.4-nano",
       messages: [
         { role: "system", content: buildSystemPrompt(user) },
-        { role: "user", content: `Title: ${post.title}\nBody: ${(post.selftext || "").substring(0, 300)}` },
+        { role: "user", content: `Title: ${post.title}\nBody: ${postBody}` },
       ],
       max_completion_tokens: 80,
       temperature: 0,
@@ -140,33 +141,21 @@ export async function prefilterPost(
       matchedCompetitors,
     };
   } catch (error) {
-    // On API failure, fall back to keyword-only matching
-    console.error(`[prefilter] Nano API error: ${error instanceof Error ? error.message : "unknown"}`);
-
-    const postLower = postText.toLowerCase();
-    const allKeywords = [...(user.keywords.primary || []), ...(user.keywords.discovery || [])];
-    const matchedKeywords = allKeywords.filter(
-      (kw) => kw.split(/\s+/).some((w) => w.length > 3 && postLower.includes(w.toLowerCase()))
-    );
-    const matchedCompetitors = user.competitors.filter(
-      (c) => postLower.includes(c.toLowerCase())
-    );
-
-    // Fallback: pass if any keyword or competitor matches
-    const fallbackPass = matchedKeywords.length > 0 || matchedCompetitors.length > 0;
+    // On API failure, reject the post. No keyword fallback — it's too noisy.
+    console.error(`[prefilter] Nano API error, rejecting post: ${error instanceof Error ? error.message : "unknown"}`);
 
     return {
-      passed: fallbackPass,
+      passed: false,
       category: "none",
-      reason: "fallback_keyword_match",
-      pass1Score: fallbackPass ? 0.5 : 0.1,
+      reason: "api_error",
+      pass1Score: 0,
       semanticScore: 0,
       keywordScore: 0,
-      keywordMatch: matchedKeywords.length > 0,
-      competitorMatch: matchedCompetitors.length > 0,
+      keywordMatch: false,
+      competitorMatch: false,
       intentMatch: false,
-      matchedKeywords,
-      matchedCompetitors,
+      matchedKeywords: [],
+      matchedCompetitors: [],
     };
   }
 }
