@@ -227,8 +227,8 @@ export function calculatePriority(
   const roundedScore = Math.round(score * 100) / 100;
 
   let level: "high" | "medium" | "low";
-  if (roundedScore > 0.5) level = "high";
-  else if (roundedScore >= 0.35) level = "medium";
+  if (roundedScore > 0.6) level = "high";
+  else if (roundedScore >= 0.3) level = "medium";
   else level = "low";
 
   return { score: roundedScore, level, factors };
