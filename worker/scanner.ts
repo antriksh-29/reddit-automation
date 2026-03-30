@@ -25,8 +25,8 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// Concurrency limit for Haiku API calls
-const haikuLimiter = pLimit(5); // Conservative for public API rate limits
+// Concurrency limit for nano scoring API calls
+const scoringLimiter = pLimit(10); // Nano is fast — higher concurrency than Haiku
 
 let scanInProgress = false;
 let lastScanTime: Date | null = null;
@@ -448,7 +448,8 @@ async function scoreAndAlert(
   metrics.postsPassedPass1++;
 
   // Pass 2: LLM relevance scoring (rate limited)
-  const { relevanceScore, category } = await haikuLimiter(() =>
+  // Pass 2: GPT-5.4-nano scoring (replaces Haiku — 8-10x cheaper)
+  const { relevanceScore, category } = await scoringLimiter(() =>
     scoreRelevance(post, {
       description: user.description,
       icp_description: user.icp_description,

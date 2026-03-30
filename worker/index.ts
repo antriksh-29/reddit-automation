@@ -41,7 +41,7 @@ const startedAt = new Date();
 async function main() {
   console.log("[worker] Starting Arete Scanner Worker...");
   console.log("[worker] Pass 1: GPT-5.4-nano (intent-aware filtering)");
-  console.log("[worker] Pass 2: Claude Haiku (relevance scoring + categorization)");
+  console.log("[worker] Pass 2: GPT-5.4-nano (relevance scoring + categorization)");
 
   // No ML model to load — nano is an API call, not a local model.
   // This means the worker starts instantly (no 10-15s model load delay).
