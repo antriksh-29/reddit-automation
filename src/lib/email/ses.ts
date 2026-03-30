@@ -18,12 +18,10 @@ const ses = new SESClient({
 
 const FROM_EMAIL = process.env.SES_FROM_EMAIL || "user-alerts@getarete.co";
 
-// IMPORTANT: APP_URL must be read inside the function, not at module level.
-// Module-level constants are evaluated at import time, which may be before
-// env vars are fully loaded in some runtimes (tsx on Railway).
-function getAppUrl(): string {
-  return process.env.NEXT_PUBLIC_APP_URL || "https://app.getarete.co";
-}
+// HARDCODED: No env var dependency. This eliminates any possibility of
+// localhost appearing in emails regardless of Railway env var state.
+// If you need to change the production URL, change it HERE.
+const APP_URL_PRODUCTION = "https://app.getarete.co";
 
 export interface AlertEmailData {
   postTitle: string;
@@ -67,9 +65,7 @@ export async function sendBatchedAlertEmail(
   businessName: string,
   alerts: AlertEmailData[]
 ): Promise<boolean> {
-  // Read APP_URL at call time, not import time
-  const APP_URL = getAppUrl();
-  console.log(`[email] APP_URL resolved to: ${APP_URL}`);
+  const APP_URL = APP_URL_PRODUCTION;
   if (alerts.length === 0) return true;
 
   const highCount = alerts.filter((a) => a.priorityLevel === "high").length;
