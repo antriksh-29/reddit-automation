@@ -437,9 +437,11 @@ async function scoreAndAlert(
     embedding_vectors: user.embedding_vectors,
     keywords: user.keywords,
     competitors: competitorNames,
+    description: user.description,
+    icp_description: user.icp_description,
   };
 
-  // Pass 1: Semantic + keyword pre-filter
+  // Pass 1: GPT-5.4-nano relevance filter
   const pass1 = await prefilterPost(post, userProfile);
 
   if (!pass1.passed) return;
