@@ -68,7 +68,8 @@ export async function sendBatchedAlertEmail(
   const lowCount = alerts.filter((a) => a.priorityLevel === "low").length;
 
   // Subject line
-  const subject = `New Arete Alerts for ${businessName}`;
+  const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD UTC
+  const subject = `New Arete Alerts for ${businessName} - ${today}`;
 
   // Summary line
   const parts: string[] = [];
