@@ -1,11 +1,10 @@
 /**
  * First Scan — fast inline scan triggered after onboarding.
- * Uses the worker's already-loaded MiniLM model for full Pass 1 quality.
+ * Uses GPT-5.4-nano for Pass 1 (same as regular scan cycle).
  * Streams progress via SSE to the frontend loading screen.
  *
  * Differences from regular scan cycle:
  *   - 2s Reddit fetch delay (not 7s) — only 3 requests
- *   - Generates business embedding if missing
  *   - Streams progress events for real-time UI
  *   - Target: <30 seconds total
  */
@@ -15,8 +14,6 @@ import pLimit from "p-limit";
 import Anthropic from "@anthropic-ai/sdk";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { embed, cosineSimilarity } from "./embeddings.js";
-import { generateAndStoreEmbedding } from "./generate-embeddings.js";
 import { prefilterPost, type UserProfile } from "./prefilter.js";
 import type { Response } from "express";
 
@@ -83,22 +80,10 @@ export async function runFirstScan(userId: string, res: Response): Promise<void>
     const keywords = business.keywords as { primary: string[]; discovery: string[] } | null;
     const allKeywords = [...(keywords?.primary || []), ...(keywords?.discovery || [])];
 
-    // 1. Generate embedding if missing (uses already-loaded MiniLM)
-    sendSSE(res, "progress", { step: "embedding", message: "Building your relevance profile...", pct: 5 });
+    // No embedding step needed — nano uses API calls, not local embeddings.
+    sendSSE(res, "progress", { step: "setup", message: "Preparing to scan...", pct: 5 });
 
-    let embeddingVectors = business.embedding_vectors as number[] | null;
-    if (!embeddingVectors || embeddingVectors.length === 0) {
-      await generateAndStoreEmbedding(business.id);
-      // Re-fetch the embedding
-      const { data: updated } = await supabase
-        .from("businesses")
-        .select("embedding_vectors")
-        .eq("id", business.id)
-        .single();
-      embeddingVectors = updated?.embedding_vectors as number[] | null;
-    }
-
-    // 2. Fetch posts from Reddit (2s delay between requests)
+    // 1. Fetch posts from Reddit (2s delay between requests)
     sendSSE(res, "progress", { step: "fetching", message: "Fetching posts from Reddit...", pct: 10 });
 
     const allPosts: (RedditPost & { subreddit_id: string })[] = [];
@@ -152,11 +137,13 @@ export async function runFirstScan(userId: string, res: Response): Promise<void>
       pct: 35,
     });
 
-    // 3. Pass 1: Full semantic pre-filter (using MiniLM — already loaded in worker)
+    // 2. Pass 1: GPT-5.4-nano relevance filter
     const userProfile: UserProfile = {
-      embedding_vectors: embeddingVectors,
+      embedding_vectors: null, // Not used with nano
       keywords: keywords || { primary: [], discovery: [] },
       competitors: competitorNames,
+      description: business.description || "",
+      icp_description: business.icp_description || "",
     };
 
     const filtered: (RedditPost & { subreddit_id: string })[] = [];

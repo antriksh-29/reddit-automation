@@ -3,22 +3,22 @@
  * Ref: TECH-SPEC.md §7 (Worker Design)
  *
  * STARTUP SEQUENCE:
- *   1. Load sentence-transformer model (MiniLM-L6-v2)
- *   2. Backfill embeddings for any businesses missing them
- *   3. Start HTTP server (health + scan-now + generate-embeddings webhooks)
- *   4. Run initial scan immediately
- *   5. Start 30-min scan interval
+ *   1. Start HTTP server (health + scan-now + validate-subreddit webhooks)
+ *   2. Run initial scan immediately
+ *   3. Start 30-min scan interval
+ *
+ * Pass 1 uses GPT-5.4-nano (API call, not local model).
+ * MiniLM-L6-v2 has been removed — nano provides better intent-aware filtering.
  *
  * ENDPOINTS:
- *   GET  /health              → { status, model_loaded, last_scan, uptime }
+ *   GET  /health              → { status, last_scan, uptime }
  *   POST /scan-now            → trigger immediate scan (shared secret auth)
- *   POST /generate-embeddings → generate embeddings for a business (from onboarding)
+ *   POST /validate-subreddit  → validate subreddit exists on Reddit
+ *   POST /fetch-thread        → fetch thread data from Reddit (proxied for Vercel)
  */
 
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
-import { loadModel, isModelLoaded } from "./embeddings.js";
-import { backfillEmbeddings, generateAndStoreEmbedding } from "./generate-embeddings.js";
 import { runFirstScan } from "./first-scan.js";
 import {
   runScanCycle,
@@ -40,24 +40,14 @@ const startedAt = new Date();
 
 async function main() {
   console.log("[worker] Starting Arete Scanner Worker...");
+  console.log("[worker] Pass 1: GPT-5.4-nano (intent-aware filtering)");
+  console.log("[worker] Pass 2: Claude Haiku (relevance scoring + categorization)");
 
-  // 1. Load ML model
-  try {
-    await loadModel();
-    console.log("[worker] ML model loaded successfully");
-  } catch (error) {
-    console.error("[worker] FATAL: Failed to load ML model:", error);
-    process.exit(1);
-  }
+  // No ML model to load — nano is an API call, not a local model.
+  // This means the worker starts instantly (no 10-15s model load delay).
 
-  // 2. Backfill embeddings for businesses that don't have them
-  try {
-    const backfilled = await backfillEmbeddings();
-    if (backfilled > 0) {
-      console.log(`[worker] Backfilled embeddings for ${backfilled} businesses`);
-    }
-  } catch (error) {
-    console.error("[worker] Embedding backfill failed (non-fatal):", error);
+  {
+    // Placeholder block to maintain code structure
   }
 
   // 3. Start HTTP server
@@ -69,7 +59,7 @@ async function main() {
     const metrics = getLastScanMetrics();
     res.json({
       status: "ok",
-      model_loaded: isModelLoaded(),
+      pass1_model: "gpt-5.4-nano",
       scan_in_progress: isScanInProgress(),
       last_scan: getLastScanTime()?.toISOString() || null,
       last_scan_metrics: metrics
@@ -114,27 +104,17 @@ async function main() {
     res.json({ status: "triggered" });
   });
 
-  // Generate embeddings webhook (triggered from onboarding complete)
+  // Generate embeddings endpoint (legacy — kept for backward compatibility)
+  // Nano doesn't need embeddings, but the onboarding flow may still call this.
   app.post("/generate-embeddings", async (req, res) => {
     const authHeader = req.headers.authorization;
     if (authHeader !== `Bearer ${effectiveSecret}`) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
-
-    const { business_id } = req.body;
-    if (!business_id) {
-      res.status(400).json({ error: "business_id required" });
-      return;
-    }
-
-    try {
-      await generateAndStoreEmbedding(business_id);
-      res.json({ status: "generated" });
-    } catch (err) {
-      console.error("[worker] Embedding generation failed:", err);
-      res.status(500).json({ error: "Failed to generate embeddings" });
-    }
+    // No-op — nano uses API calls, not local embeddings
+    console.log("[worker] /generate-embeddings called (no-op with nano)");
+    res.json({ status: "generated" });
   });
 
   // First scan SSE endpoint (called from onboarding setup page)
