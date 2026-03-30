@@ -17,7 +17,13 @@ const ses = new SESClient({
 });
 
 const FROM_EMAIL = process.env.SES_FROM_EMAIL || "user-alerts@getarete.co";
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.getarete.co";
+
+// IMPORTANT: APP_URL must be read inside the function, not at module level.
+// Module-level constants are evaluated at import time, which may be before
+// env vars are fully loaded in some runtimes (tsx on Railway).
+function getAppUrl(): string {
+  return process.env.NEXT_PUBLIC_APP_URL || "https://app.getarete.co";
+}
 
 export interface AlertEmailData {
   postTitle: string;
@@ -61,6 +67,9 @@ export async function sendBatchedAlertEmail(
   businessName: string,
   alerts: AlertEmailData[]
 ): Promise<boolean> {
+  // Read APP_URL at call time, not import time
+  const APP_URL = getAppUrl();
+  console.log(`[email] APP_URL resolved to: ${APP_URL}`);
   if (alerts.length === 0) return true;
 
   const highCount = alerts.filter((a) => a.priorityLevel === "high").length;
