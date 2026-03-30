@@ -1,7 +1,9 @@
 /**
- * First-Scan API — proxies to the worker's /first-scan SSE endpoint.
- * The worker has MiniLM loaded in memory for full Pass 1 quality.
- * This route just forwards the SSE stream from worker to frontend.
+ * First-Scan API — fires off the worker's first-scan and returns immediately.
+ * The worker runs the scan in the background. The frontend polls /api/alerts.
+ *
+ * This is fire-and-forget because Vercel's serverless timeout (10-15s) is
+ * shorter than the scan duration (~30-45s with nano processing 75 posts).
  */
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -22,33 +24,31 @@ export async function POST() {
   }
 
   try {
-    // Call worker's first-scan endpoint
-    const workerRes = await fetch(`${workerUrl}/first-scan`, {
+    // Fire-and-forget: tell worker to start scanning, don't wait for completion
+    // Use AbortController to not wait for the response body
+    const controller = new AbortController();
+
+    fetch(`${workerUrl}/first-scan`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${workerSecret}`,
       },
       body: JSON.stringify({ user_id: user.id }),
+      signal: controller.signal,
+    }).catch(() => {
+      // Ignore — we don't wait for the response
     });
 
-    if (!workerRes.ok) {
-      return new Response(
-        JSON.stringify({ error: "Worker scan failed" }),
-        { status: 502 }
-      );
-    }
+    // Give the request 500ms to reach the worker, then abort the connection
+    setTimeout(() => controller.abort(), 500);
 
-    // Forward the SSE stream from worker to client
-    return new Response(workerRes.body, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
+    return new Response(
+      JSON.stringify({ status: "scanning", message: "Scan started. Poll /api/alerts for results." }),
+      { status: 202, headers: { "Content-Type": "application/json" } }
+    );
   } catch (error) {
-    console.error("First scan proxy error:", error);
+    console.error("First scan trigger error:", error);
     return new Response(
       JSON.stringify({ error: "Could not reach worker" }),
       { status: 502 }
