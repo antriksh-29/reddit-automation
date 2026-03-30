@@ -1,7 +1,12 @@
 /**
- * Pass 2: LLM Relevance Scoring + Priority Calculation
- * Uses Claude Haiku for relevance scoring.
+ * Pass 2: GPT-5.4-nano Relevance Scoring + Priority Calculation
+ * Replaces Claude Haiku with nano — 8-10x cheaper, same quality on pre-filtered posts.
  * Ref: PRODUCT-SPEC.md §7.1 (Pass 2), TECH-SPEC.md §7
+ *
+ * Posts reaching Pass 2 have already been filtered by nano in Pass 1,
+ * so they're all genuinely relevant. Pass 2's job is to:
+ *   1. Assign a relevance score (0.0-1.0)
+ *   2. Categorize the post (pain_point, solution_request, etc.)
  *
  * Priority formula (PRODUCT-SPEC.md):
  *   40% relevance + 30% recency + 15% velocity + 15% intent
@@ -15,18 +20,10 @@
  *   > 12 hours → 0.1
  */
 
-import Anthropic from "@anthropic-ai/sdk";
-import { readFileSync } from "fs";
-import { join } from "path";
+import OpenAI from "openai";
 import type { RedditPost } from "./reddit.js";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-// Load prompt template once
-const promptTemplate = readFileSync(
-  join(process.cwd(), "prompts", "relevance-scoring.md"),
-  "utf-8"
-);
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export type PostCategory =
   | "pain_point"
@@ -58,8 +55,30 @@ interface BusinessContext {
   competitors: string[];
 }
 
+const SCORING_SYSTEM_PROMPT = `You are a relevance scorer for a Reddit monitoring platform. Score how relevant a Reddit post is to a specific business.
+
+This post has ALREADY been identified as potentially relevant. Your job is to:
+1. Score the relevance from 0.0 to 1.0
+2. Categorize the post type
+
+SCORING GUIDE:
+- 0.9-1.0: Post directly asks for or discusses a tool/solution in the business's exact category. Mentions a competitor. Describes the exact problem the business solves.
+- 0.7-0.8: Post is clearly about the business's domain. The poster's situation closely matches the ICP. Strong keyword overlap.
+- 0.5-0.6: Post is related to the business's domain but not a direct match. Adjacent topic that the ICP would care about.
+- 0.3-0.4: Post has some connection but is tangential. Loosely related to the business's space.
+- 0.1-0.2: Barely relevant. Only passed the initial filter due to surface-level overlap.
+
+CATEGORIES:
+- pain_point: Poster expresses frustration with a problem the business solves
+- solution_request: Poster actively looking for tools in the business's category
+- competitor_dissatisfaction: Poster names a competitor with negative sentiment or seeking alternatives
+- experience_sharing: Poster shares experience with the business's domain workflow
+- industry_discussion: Poster discusses strategies/trends in the business's domain
+
+Respond ONLY with JSON: {"relevance_score": 0.0-1.0, "category": "pain_point|solution_request|competitor_dissatisfaction|experience_sharing|industry_discussion"}`;
+
 /**
- * Pass 2: Score a post's relevance using Claude Haiku.
+ * Pass 2: Score a post's relevance using GPT-5.4-nano.
  */
 export async function scoreRelevance(
   post: RedditPost,
@@ -70,49 +89,34 @@ export async function scoreRelevance(
     ...(business.keywords.discovery || []),
   ];
 
-  const prompt = promptTemplate
-    .replace("{{business_description}}", business.description || "")
-    .replace("{{icp_description}}", business.icp_description || "")
-    .replace("{{keywords}}", allKeywords.join(", "))
-    .replace("{{competitors}}", business.competitors.join(", "))
-    .replace("{{subreddit}}", post.subreddit)
-    .replace("{{post_title}}", post.title)
-    .replace("{{post_body}}", post.selftext.slice(0, 1500)) // Truncate long posts
-    .replace("{{upvotes}}", String(post.ups))
-    .replace("{{num_comments}}", String(post.num_comments));
+  const userMessage = `BUSINESS: ${business.description || ""}
+ICP: ${business.icp_description || ""}
+KEYWORDS: ${allKeywords.join(", ")}
+COMPETITORS: ${business.competitors.join(", ")}
 
-  // Primary: Claude Haiku. Fallback: GPT-5.4-mini. Per TECH-SPEC.md §6.5
-  let text = "";
+POST:
+Subreddit: r/${post.subreddit}
+Title: ${post.title}
+Body: ${(post.selftext || "").slice(0, 1500)}
+Upvotes: ${post.ups} | Comments: ${post.num_comments}`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 100,
-      messages: [{ role: "user", content: prompt }],
+    const response = await openai.chat.completions.create({
+      model: "gpt-5.4-nano",
+      messages: [
+        { role: "system", content: SCORING_SYSTEM_PROMPT },
+        { role: "user", content: userMessage },
+      ],
+      max_completion_tokens: 60,
+      temperature: 0,
     });
-    text = response.content[0].type === "text" ? response.content[0].text : "";
-  } catch (claudeErr) {
-    console.warn("[scoring] Haiku failed, falling back to GPT-5.4-mini:", (claudeErr as Error).message);
-    try {
-      const OpenAI = (await import("openai")).default;
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-      const gptRes = await openai.chat.completions.create({
-        model: "gpt-5.4-mini",
-        max_completion_tokens: 100,
-        messages: [{ role: "user", content: prompt }],
-      });
-      text = gptRes.choices[0]?.message?.content || "";
-    } catch (gptErr) {
-      console.error("[scoring] Both Haiku and GPT-5.4-mini failed:", (gptErr as Error).message);
-      return { relevanceScore: 0.5, category: "industry_discussion" };
-    }
-  }
 
-  try {
-    // Parse JSON from response (handle potential markdown wrapping)
+    const text = response.choices[0]?.message?.content || "";
+
+    // Parse JSON from response
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      console.warn("[scoring] Failed to parse LLM response:", text);
+      console.warn("[scoring] Failed to parse nano response:", text.substring(0, 100));
       return { relevanceScore: 0.5, category: "industry_discussion" };
     }
 
@@ -135,7 +139,8 @@ export async function scoreRelevance(
 
     return { relevanceScore: score, category };
   } catch (error) {
-    console.error("[scoring] Response parsing failed:", error);
+    console.error("[scoring] Nano scoring failed:", (error as Error).message);
+    // On failure, assign a middle score — the post already passed Pass 1 so it's relevant
     return { relevanceScore: 0.5, category: "industry_discussion" };
   }
 }
@@ -147,7 +152,7 @@ export async function scoreRelevance(
 function recencyScore(postCreatedUtc: number): number {
   const ageMinutes = (Date.now() / 1000 - postCreatedUtc) / 60;
 
-  if (ageMinutes < 30) return 1.0;  // Within current scan window
+  if (ageMinutes < 30) return 1.0; // Within current scan window
   if (ageMinutes < 60) return 0.8;
   if (ageMinutes < 180) return 0.6; // 3 hours
   if (ageMinutes < 360) return 0.4; // 6 hours
