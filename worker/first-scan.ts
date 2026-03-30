@@ -11,10 +11,9 @@
 
 import { createClient } from "@supabase/supabase-js";
 import pLimit from "p-limit";
-import Anthropic from "@anthropic-ai/sdk";
-import { readFileSync } from "fs";
-import { join } from "path";
 import { prefilterPost, type UserProfile } from "./prefilter.js";
+import { scoreRelevance } from "./scoring.js";
+import type { RedditPost } from "./reddit.js";
 import type { Response } from "express";
 
 const supabase = createClient(
@@ -22,16 +21,11 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// No Anthropic client needed — both passes use nano (OpenAI)
 const USER_AGENT = "Arete/1.0 (Reddit Lead Intelligence)";
 const FETCH_DELAY_MS = 2000;
 
-const promptTemplate = readFileSync(
-  join(process.cwd(), "prompts", "relevance-scoring.md"),
-  "utf-8"
-);
-
-interface RedditPost {
+interface FirstScanRedditPost {
   id: string;
   name: string;
   title: string;
@@ -146,16 +140,20 @@ export async function runFirstScan(userId: string, res: Response): Promise<void>
       icp_description: business.icp_description || "",
     };
 
-    const filtered: (RedditPost & { subreddit_id: string })[] = [];
-    for (const post of allPosts) {
-      const result = await prefilterPost(
-        { ...post, url: "", is_self: true },
-        userProfile
-      );
-      if (result.passed) {
-        filtered.push(post);
-      }
-    }
+    // Run nano prefilter in parallel batches (p-limit=15 for speed)
+    const prefilterLimiter = pLimit(15);
+    const filterResults = await Promise.all(
+      allPosts.map((post) =>
+        prefilterLimiter(async () => {
+          const result = await prefilterPost(
+            { ...post, url: "", is_self: true },
+            userProfile
+          );
+          return { post, passed: result.passed };
+        })
+      )
+    );
+    const filtered = filterResults.filter((r) => r.passed).map((r) => r.post);
 
     // Sort filtered posts by Pass 1 score (highest first) and cap to top 15
     // Remaining posts will be scored in the next regular 30-min scan cycle
@@ -169,51 +167,25 @@ export async function runFirstScan(userId: string, res: Response): Promise<void>
       pct: 45,
     });
 
-    // 4. Pass 2: Haiku scoring (parallel, concurrency=10 for speed)
-    const limiter = pLimit(10);
+    // 3. Pass 2: Nano scoring (parallel, concurrency=15 for speed)
+    const scoringLimiter = pLimit(15);
     let scored = 0;
+
+    const businessContext = {
+      description: business.description || "",
+      icp_description: business.icp_description || "",
+      keywords: keywords || { primary: [], discovery: [] },
+      competitors: competitorNames,
+    };
 
     const results = await Promise.allSettled(
       scoredByPass1.map((post) =>
-        limiter(async () => {
-          const prompt = promptTemplate
-            .replace("{{business_description}}", business.description || "")
-            .replace("{{icp_description}}", business.icp_description || "")
-            .replace("{{keywords}}", allKeywords.join(", "))
-            .replace("{{competitors}}", competitorNames.join(", "))
-            .replace("{{subreddit}}", post.subreddit)
-            .replace("{{post_title}}", post.title)
-            .replace("{{post_body}}", post.selftext.slice(0, 1500))
-            .replace("{{upvotes}}", String(post.ups))
-            .replace("{{num_comments}}", String(post.num_comments));
-
+        scoringLimiter(async () => {
           try {
-            // Primary: Haiku. Fallback: GPT-5.4-mini.
-            let text = "";
-            try {
-              const response = await anthropic.messages.create({
-                model: "claude-haiku-4-5-20251001",
-                max_tokens: 100,
-                messages: [{ role: "user", content: prompt }],
-              });
-              text = response.content[0].type === "text" ? response.content[0].text : "";
-            } catch {
-              const OpenAI = (await import("openai")).default;
-              const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-              const gptRes = await openai.chat.completions.create({
-                model: "gpt-5.4-mini",
-                max_completion_tokens: 100,
-                messages: [{ role: "user", content: prompt }],
-              });
-              text = gptRes.choices[0]?.message?.content || "";
-            }
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
-            if (!jsonMatch) return null;
-
-            const parsed = JSON.parse(jsonMatch[0]);
-            const relevanceScore = Math.max(0, Math.min(1, Number(parsed.relevance_score) || 0.5));
-            const validCategories = ["pain_point", "solution_request", "competitor_dissatisfaction", "experience_sharing", "industry_discussion"];
-            const category = validCategories.includes(parsed.category) ? parsed.category : "industry_discussion";
+            const { relevanceScore, category } = await scoreRelevance(
+              { ...post, url: "", is_self: true } as RedditPost & { url: string; is_self: boolean },
+              businessContext
+            );
 
             scored++;
             sendSSE(res, "progress", {
