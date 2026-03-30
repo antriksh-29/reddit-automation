@@ -83,6 +83,7 @@ async function main() {
           }
         : null,
       uptime_seconds: Math.floor((Date.now() - startedAt.getTime()) / 1000),
+      deploy_version: "v2-hardcoded-url",
       env_check: {
         APP_URL: process.env.NEXT_PUBLIC_APP_URL || "(fallback: https://app.getarete.co)",
         SES_FROM: process.env.SES_FROM_EMAIL || "(fallback: user-alerts@getarete.co)",
