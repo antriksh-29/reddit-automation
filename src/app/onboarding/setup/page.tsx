@@ -5,193 +5,170 @@ import { useEffect, useState, useRef } from "react";
 
 const shimmerCSS = `
 @keyframes spin { to { transform: rotate(360deg); } }
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 `;
-
-interface ProgressEvent {
-  step: string;
-  message: string;
-  pct: number;
-  alertsCreated?: number;
-}
 
 export default function SetupPage() {
   const router = useRouter();
-  const [progress, setProgress] = useState<ProgressEvent>({
-    step: "starting",
-    message: "Preparing your dashboard...",
-    pct: 0,
-  });
-  const [alertsCreated, setAlertsCreated] = useState(0);
+  const [alertsFound, setAlertsFound] = useState(0);
   const [done, setDone] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState("Preparing your dashboard...");
+  const [pct, setPct] = useState(5);
   const started = useRef(false);
+  const pollCount = useRef(0);
 
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    runFirstScan();
+    kickoff();
   }, []);
 
-  async function runFirstScan() {
+  async function kickoff() {
+    // Step 1: Fire-and-forget — tell worker to start scanning
+    setMessage("Starting analysis of your subreddits...");
+    setPct(10);
+
     try {
-      const res = await fetch("/api/onboarding/first-scan", { method: "POST" });
+      await fetch("/api/onboarding/first-scan", { method: "POST" });
+    } catch {
+      // Ignore — worker may already be scanning
+    }
 
-      if (!res.ok) {
-        setError("Failed to start scan. Redirecting to dashboard...");
-        setTimeout(() => router.push("/dashboard"), 2000);
-        return;
+    // Step 2: Show progress messages while polling
+    setMessage("Fetching posts from Reddit...");
+    setPct(20);
+
+    // Step 3: Poll /api/alerts every 3 seconds until alerts appear
+    const pollInterval = setInterval(async () => {
+      pollCount.current++;
+
+      // Update progress message based on time elapsed
+      const elapsed = pollCount.current * 3;
+      if (elapsed < 10) {
+        setMessage("Scanning your subreddits for relevant posts...");
+        setPct(30);
+      } else if (elapsed < 20) {
+        setMessage("Running AI analysis on discovered posts...");
+        setPct(50);
+      } else if (elapsed < 35) {
+        setMessage("Scoring and prioritizing posts for you...");
+        setPct(70);
+      } else if (elapsed < 60) {
+        setMessage("Almost done — finalizing your alerts...");
+        setPct(85);
+      } else {
+        setMessage("Taking a bit longer than expected. Hang tight...");
+        setPct(90);
       }
 
-      const reader = res.body?.getReader();
-      if (!reader) {
-        router.push("/dashboard");
-        return;
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done: streamDone, value } = await reader.read();
-        if (streamDone) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        let eventType = "";
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            eventType = line.slice(7).trim();
-          } else if (line.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (eventType === "progress") {
-                setProgress(data);
-                if (data.alertsCreated !== undefined) {
-                  setAlertsCreated(data.alertsCreated);
-                }
-              } else if (eventType === "complete") {
-                setAlertsCreated(data.alertsCreated || 0);
-                setDone(true);
-              } else if (eventType === "error") {
-                setError(data.message);
-              }
-            } catch {
-              // Ignore parse errors
-            }
+      try {
+        const res = await fetch("/api/alerts?limit=5&sort=priority");
+        if (res.ok) {
+          const data = await res.json();
+          const count = data.alerts?.length || 0;
+          if (count > 0) {
+            setAlertsFound(count);
+            setPct(100);
+            setMessage(`Found ${count}+ relevant posts for you!`);
+            setDone(true);
+            clearInterval(pollInterval);
           }
         }
+      } catch {
+        // Ignore poll errors
       }
 
-      // Auto-redirect when done
-      if (!error) {
+      // Safety: stop polling after 2 minutes and redirect anyway
+      if (pollCount.current > 40) {
+        clearInterval(pollInterval);
         setDone(true);
-        setTimeout(() => router.push("/dashboard"), 1500);
+        setMessage("Your dashboard is ready!");
       }
-    } catch {
-      setError("Connection lost. Redirecting to dashboard...");
-      setTimeout(() => router.push("/dashboard"), 2000);
-    }
+    }, 3000);
+
+    return () => clearInterval(pollInterval);
   }
 
-  const stepLabels: Record<string, string> = {
-    starting: "Initializing...",
-    fetching: "Scanning Reddit",
-    filtering: "Analyzing relevance",
-    scoring: "AI scoring posts",
-    saving: "Preparing dashboard",
-    done: "All set!",
-  };
-
   return (
-    <div style={{ minHeight: "100vh", backgroundColor: "#0A0A0A", display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div style={{ minHeight: "100vh", backgroundColor: "#0A0A0A", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
       <style dangerouslySetInnerHTML={{ __html: shimmerCSS }} />
 
-      <div style={{ width: "100%", maxWidth: "480px", padding: "0 16px", textAlign: "center" }}>
+      <div style={{ maxWidth: "480px", width: "100%", textAlign: "center" }}>
         {/* Logo */}
-        <h1 style={{
-          fontFamily: "'Satoshi', system-ui, sans-serif",
-          fontSize: "28px",
-          fontWeight: 700,
-          color: "#E8651A",
-          marginBottom: "40px",
-        }}>
+        <h1 style={{ fontFamily: "'Satoshi', system-ui, sans-serif", fontSize: "28px", fontWeight: 700, color: "#E8651A", marginBottom: "32px" }}>
           Arete
         </h1>
 
         {/* Spinner or checkmark */}
         <div style={{ marginBottom: "24px" }}>
-          {done ? (
-            <div style={{
-              width: "56px", height: "56px", margin: "0 auto",
-              borderRadius: "50%", backgroundColor: "rgba(34, 197, 94, 0.15)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: "28px", color: "#22C55E",
-            }}>
+          {!done ? (
+            <div style={{ width: "48px", height: "48px", border: "3px solid #2A2A2A", borderTopColor: "#E8651A", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto" }} />
+          ) : (
+            <div style={{ width: "48px", height: "48px", borderRadius: "50%", backgroundColor: "rgba(34, 197, 94, 0.15)", border: "2px solid #22C55E", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto", fontSize: "22px" }}>
               ✓
             </div>
-          ) : (
-            <div style={{
-              width: "56px", height: "56px", margin: "0 auto",
-              border: "3px solid #2A2A2A", borderTopColor: "#E8651A",
-              borderRadius: "50%", animation: "spin 0.8s linear infinite",
-            }} />
           )}
         </div>
 
-        {/* Step label */}
-        <h2 style={{
-          fontFamily: "'Satoshi', system-ui, sans-serif",
-          fontSize: "20px",
-          fontWeight: 600,
-          color: "#F5F5F3",
-          marginBottom: "8px",
-        }}>
-          {done ? "Your dashboard is ready!" : stepLabels[progress.step] || "Working..."}
-        </h2>
-
-        {/* Detail message */}
+        {/* Message */}
         <p style={{
-          fontSize: "14px",
-          color: "#A3A3A0",
-          marginBottom: "32px",
-          minHeight: "20px",
+          fontSize: "16px",
+          fontWeight: 500,
+          color: done ? "#22C55E" : "#F5F5F3",
+          marginBottom: "8px",
+          animation: done ? "none" : "pulse 2s ease-in-out infinite",
         }}>
-          {error || progress.message}
+          {message}
         </p>
 
         {/* Progress bar */}
-        <div style={{
-          width: "100%",
-          height: "4px",
-          backgroundColor: "#1C1C1C",
-          borderRadius: "2px",
-          overflow: "hidden",
-          marginBottom: "16px",
-        }}>
-          <div style={{
-            width: `${progress.pct}%`,
-            height: "100%",
-            backgroundColor: done ? "#22C55E" : "#E8651A",
-            borderRadius: "2px",
-            transition: "width 0.5s ease-out, background-color 0.3s ease",
-          }} />
+        <div style={{ width: "100%", height: "4px", backgroundColor: "#2A2A2A", borderRadius: "2px", marginBottom: "24px", overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${pct}%`, backgroundColor: done ? "#22C55E" : "#E8651A", borderRadius: "2px", transition: "width 0.5s ease" }} />
         </div>
 
-        {/* Stats */}
-        {alertsCreated > 0 && (
-          <p style={{
-            fontSize: "13px",
-            color: done ? "#22C55E" : "#A3A3A0",
-            animation: done ? undefined : "pulse 1.5s ease-in-out infinite",
-          }}>
-            {done
-              ? `Found ${alertsCreated} relevant posts for your dashboard`
-              : `${alertsCreated} alerts found so far...`
-            }
+        {/* Alerts count */}
+        {alertsFound > 0 && (
+          <p style={{ fontSize: "14px", color: "#A3A3A0", marginBottom: "24px" }}>
+            {alertsFound}+ posts matched your business profile
           </p>
+        )}
+
+        {/* Go to Dashboard button */}
+        {done && (
+          <button
+            onClick={() => router.push("/dashboard")}
+            style={{
+              backgroundColor: "#E8651A",
+              border: "none",
+              borderRadius: "8px",
+              padding: "14px 32px",
+              fontSize: "15px",
+              fontWeight: 600,
+              color: "#FFFFFF",
+              cursor: "pointer",
+              fontFamily: "'DM Sans', system-ui, sans-serif",
+            }}
+          >
+            Go to Dashboard →
+          </button>
+        )}
+
+        {/* Skip link (after 15 seconds) */}
+        {!done && pollCount.current > 5 && (
+          <button
+            onClick={() => router.push("/dashboard")}
+            style={{
+              backgroundColor: "transparent",
+              border: "none",
+              fontSize: "13px",
+              color: "#6B6B68",
+              cursor: "pointer",
+              marginTop: "16px",
+              fontFamily: "'DM Sans', system-ui, sans-serif",
+            }}
+          >
+            Skip — I&apos;ll check the dashboard later
+          </button>
         )}
       </div>
     </div>
