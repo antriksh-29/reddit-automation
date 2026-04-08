@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { callOpenAI } from "@/lib/llm/openai";
 import { callClaude } from "@/lib/llm/anthropic";
 import { NextResponse } from "next/server";
 import { readFileSync } from "fs";
@@ -28,16 +29,19 @@ export async function POST(request: Request) {
     );
   }
 
-  try {
-    const userMessage = `Business Description: ${description}
+  const userMessage = `Business Description: ${description}
 
 Ideal Customer Profile: ${icp_description}
 
 Known Competitors: ${competitors?.length ? competitors.join(", ") : "None identified yet"}`;
 
-    const { text, inputTokens, outputTokens } = await callClaude({
+  try {
+    // Primary: GPT-5.4 (better Reddit knowledge due to Reddit API partnership)
+    const { text, inputTokens, outputTokens } = await callOpenAI({
+      model: "gpt-5.4",
       systemPrompt: SYSTEM_PROMPT,
       userMessage,
+      maxTokens: 1500,
     });
 
     const discovery = JSON.parse(text);
@@ -46,10 +50,26 @@ Known Competitors: ${competitors?.length ? competitors.join(", ") : "None identi
       discovery,
       tokens: { input: inputTokens, output: outputTokens },
     });
-  } catch {
-    return NextResponse.json(
-      { error: "Failed to discover subreddits and keywords. Please try again." },
-      { status: 500 }
-    );
+  } catch (primaryError) {
+    // Fallback: Claude Sonnet
+    console.error("GPT-5.4 discovery failed, falling back to Claude:", primaryError);
+    try {
+      const { text, inputTokens, outputTokens } = await callClaude({
+        systemPrompt: SYSTEM_PROMPT,
+        userMessage,
+      });
+
+      const discovery = JSON.parse(text);
+
+      return NextResponse.json({
+        discovery,
+        tokens: { input: inputTokens, output: outputTokens },
+      });
+    } catch {
+      return NextResponse.json(
+        { error: "Failed to discover subreddits and keywords. Please try again." },
+        { status: 500 }
+      );
+    }
   }
 }
