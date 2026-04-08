@@ -97,6 +97,8 @@ export async function runFirstScan(userId: string, res: Response): Promise<void>
           redirect: "manual",
         });
 
+        console.log(`[first-scan] r/${sub.subreddit_name}: HTTP ${fetchRes.status}, type=${fetchRes.headers.get('content-type')}`);
+
         if (fetchRes.ok) {
           const data = await fetchRes.json();
           const posts = (data?.data?.children || [])
@@ -114,10 +116,14 @@ export async function runFirstScan(userId: string, res: Response): Promise<void>
               num_comments: c.data.num_comments as number,
               subreddit_id: sub.id,
             }));
+          console.log(`[first-scan] r/${sub.subreddit_name}: ${posts.length} posts parsed`);
           allPosts.push(...posts);
+        } else {
+          const bodyPreview = await fetchRes.text().catch(() => "").then(t => t.substring(0, 200));
+          console.log(`[first-scan] r/${sub.subreddit_name}: BLOCKED — ${bodyPreview}`);
         }
-      } catch {
-        // Skip failed subreddit
+      } catch (err) {
+        console.log(`[first-scan] r/${sub.subreddit_name}: FETCH ERROR — ${err}`);
       }
 
       if (i < subredditList.length - 1) {
