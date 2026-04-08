@@ -201,7 +201,7 @@ Always return valid JSON.`,
       console.error("[drafts] OpenAI failed, falling back to Claude:", (openaiErr as Error).message);
       modelUsed = "gpt-5.4";
       result = await callClaude({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6-20250514",
         maxTokens: 2000,
         systemPrompt: `You are a real Reddit power user. Write authentic, helpful comments. Never write promotional content. Always return valid JSON.`,
         userMessage: prompt,
@@ -347,8 +347,8 @@ Return ONLY the comment text. No JSON, no quotes, no meta-commentary.`;
     try {
       result = await callOpenAI({ model: "gpt-5.4", maxTokens: 600, systemPrompt: sysPrompt, userMessage: prompt });
     } catch {
-      regenModel = "claude-sonnet-4-20250514";
-      result = await callClaude({ model: "claude-sonnet-4-20250514", maxTokens: 600, systemPrompt: sysPrompt, userMessage: prompt });
+      regenModel = "claude-sonnet-4-6-20250514";
+      result = await callClaude({ model: "claude-sonnet-4-6-20250514", maxTokens: 600, systemPrompt: sysPrompt, userMessage: prompt });
     }
 
     const totalTokens = result.inputTokens + result.outputTokens;
