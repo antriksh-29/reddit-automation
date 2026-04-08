@@ -91,7 +91,9 @@ export async function runFirstScan(userId: string, res: Response): Promise<void>
       });
 
       try {
-        const url = `https://api.reddit.com/r/${sub.subreddit_name}/new.json?limit=25&raw_json=1`;
+        // First scan uses /hot.json (best engaging recent content) with limit=100
+        // Regular scanner uses /new.json (chronological) — different use case
+        const url = `https://api.reddit.com/r/${sub.subreddit_name}/hot.json?limit=100&raw_json=1`;
         const fetchRes = await fetch(url, {
           headers: { "User-Agent": USER_AGENT },
           redirect: "manual",
