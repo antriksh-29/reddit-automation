@@ -153,12 +153,14 @@ export async function POST(request: Request) {
     console.error("Onboarding error:", errMsg, error);
 
     // Log the error to event_logs for debugging
-    await admin.from("event_logs").insert({
-      user_id: user.id,
-      event_type: "onboarding.error",
-      event_data: { error: errMsg, stack: error instanceof Error ? error.stack?.substring(0, 500) : null },
-      source: "backend",
-    }).catch(() => {}); // Don't let logging fail the error response
+    try {
+      await admin.from("event_logs").insert({
+        user_id: user.id,
+        event_type: "onboarding.error",
+        event_data: { error: errMsg, stack: error instanceof Error ? error.stack?.substring(0, 500) : null },
+        source: "backend",
+      });
+    } catch { /* Don't let logging fail the error response */ }
 
     return NextResponse.json(
       { error: `Failed to complete onboarding: ${errMsg}` },
