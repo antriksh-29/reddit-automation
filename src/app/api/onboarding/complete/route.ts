@@ -36,6 +36,22 @@ export async function POST(request: Request) {
   const admin = createAdminClient();
 
   try {
+    // Ensure public.users row exists (auth trigger may not have fired if user was deleted and re-logged in)
+    const { data: existingUser } = await admin
+      .from("users")
+      .select("id")
+      .eq("id", user.id)
+      .single();
+
+    if (!existingUser) {
+      await admin.from("users").insert({
+        id: user.id,
+        email: user.email!,
+        name: user.user_metadata?.name || user.email?.split("@")[0] || "",
+        plan_tier: "free",
+        auth_provider_id: user.id,
+      });
+    }
     // 1. Create business
     const { data: business, error: bizError } = await admin
       .from("businesses")
