@@ -149,9 +149,19 @@ export async function POST(request: Request) {
       credits_granted: PLANS.free.initialCredits,
     });
   } catch (error) {
-    console.error("Onboarding error:", error);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    console.error("Onboarding error:", errMsg, error);
+
+    // Log the error to event_logs for debugging
+    await admin.from("event_logs").insert({
+      user_id: user.id,
+      event_type: "onboarding.error",
+      event_data: { error: errMsg, stack: error instanceof Error ? error.stack?.substring(0, 500) : null },
+      source: "backend",
+    }).catch(() => {}); // Don't let logging fail the error response
+
     return NextResponse.json(
-      { error: "Failed to complete onboarding. Please try again." },
+      { error: `Failed to complete onboarding: ${errMsg}` },
       { status: 500 }
     );
   }
