@@ -24,7 +24,7 @@ export default function LoginPage() {
         padding: "48px 24px",
       }}
     >
-      <div style={{ width: "100%", maxWidth: "640px" }}>
+      <div style={{ width: "100%", maxWidth: "720px" }}>
         {/* Heading */}
         <h1
           style={{
@@ -43,15 +43,14 @@ export default function LoginPage() {
         <p
           style={{
             fontFamily: "'DM Sans', system-ui, sans-serif",
-            fontSize: "20px",
+            fontSize: "19px",
             lineHeight: 1.5,
             color: "#EDEDEB",
             marginBottom: "44px",
-            maxWidth: "540px",
           }}
         >
-          Turn Reddit into your indirect sales and word-of-mouth channel.
-          {" "}Never miss a conversation where you can be genuinely helpful.
+          Turn Reddit into your indirect sales and word-of-mouth channel — never
+          miss a conversation where you can be genuinely helpful.
         </p>
 
         {/* Features */}
