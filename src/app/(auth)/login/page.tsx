@@ -24,7 +24,7 @@ export default function LoginPage() {
         padding: "48px 24px",
       }}
     >
-      <div style={{ width: "100%", maxWidth: "560px" }}>
+      <div style={{ width: "100%", maxWidth: "640px" }}>
         {/* Heading */}
         <h1
           style={{
