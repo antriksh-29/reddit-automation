@@ -80,11 +80,11 @@ export async function POST(request: NextRequest) {
 
     // Primary: Claude Sonnet. Fallback: GPT-5.4. Per TECH-SPEC.md §6.5
     let result: { text: string; inputTokens: number; outputTokens: number };
-    let modelUsed = "claude-sonnet-4-20250514";
+    let modelUsed = "claude-sonnet-4-6-20250514";
     const sysPrompt = "You are a business intelligence analyst. Analyze Reddit threads to extract actionable insights for businesses. Always return valid JSON.";
 
     try {
-      result = await callClaude({ model: "claude-sonnet-4-20250514", maxTokens: 2000, systemPrompt: sysPrompt, userMessage: prompt });
+      result = await callClaude({ model: "claude-sonnet-4-6-20250514", maxTokens: 2000, systemPrompt: sysPrompt, userMessage: prompt });
     } catch (claudeErr) {
       console.error("[threads/analyze] Claude failed, falling back to GPT-5.4:", (claudeErr as Error).message);
       const { callOpenAI } = await import("@/lib/llm/openai");

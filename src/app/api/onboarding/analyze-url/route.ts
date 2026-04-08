@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { callOpenAI } from "@/lib/llm/openai";
 import { callClaude } from "@/lib/llm/anthropic";
 import { NextResponse } from "next/server";
 import { readFileSync } from "fs";
@@ -107,11 +108,28 @@ export async function POST(request: Request) {
       );
     }
 
-    // Agent 1: Analyze website
-    const { text, inputTokens, outputTokens } = await callClaude({
-      systemPrompt: SYSTEM_PROMPT,
-      userMessage: `Website URL: ${url}\n\nWebsite content:\n${textContent}`,
-    });
+    // Agent 1: Analyze website (GPT-5.4 primary, Claude Sonnet 4.6 fallback)
+    let text: string, inputTokens: number, outputTokens: number;
+    try {
+      const result = await callOpenAI({
+        model: "gpt-5.4",
+        systemPrompt: SYSTEM_PROMPT,
+        userMessage: `Website URL: ${url}\n\nWebsite content:\n${textContent}`,
+        maxTokens: 1500,
+      });
+      text = result.text;
+      inputTokens = result.inputTokens;
+      outputTokens = result.outputTokens;
+    } catch {
+      console.error("GPT-5.4 website analysis failed, falling back to Claude");
+      const result = await callClaude({
+        systemPrompt: SYSTEM_PROMPT,
+        userMessage: `Website URL: ${url}\n\nWebsite content:\n${textContent}`,
+      });
+      text = result.text;
+      inputTokens = result.inputTokens;
+      outputTokens = result.outputTokens;
+    }
 
     // Parse JSON — handle markdown code blocks if LLM wraps response
     const jsonStr = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();

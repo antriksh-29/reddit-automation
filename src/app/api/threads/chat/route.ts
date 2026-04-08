@@ -104,10 +104,10 @@ FORMATTING RULES:
 
     // Primary: Claude Sonnet. Fallback: GPT-5.4.
     let result: { text: string; inputTokens: number; outputTokens: number };
-    let modelUsed = "claude-sonnet-4-20250514";
+    let modelUsed = "claude-sonnet-4-6-20250514";
 
     try {
-      result = await callClaude({ model: "claude-sonnet-4-20250514", maxTokens: 1000, systemPrompt, userMessage: fullPrompt });
+      result = await callClaude({ model: "claude-sonnet-4-6-20250514", maxTokens: 1000, systemPrompt, userMessage: fullPrompt });
     } catch {
       const { callOpenAI } = await import("@/lib/llm/openai");
       modelUsed = "gpt-5.4";

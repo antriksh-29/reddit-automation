@@ -121,17 +121,17 @@ Be honest but constructive. If the draft is good, say so. If it needs work, be s
 
 Return ONLY the JSON object, no other text.`;
 
-    // Primary: Claude Sonnet. Fallback: GPT-5.4.
+    // Primary: GPT-5.4. Fallback: Claude Sonnet 4.6.
     let result: { text: string; inputTokens: number; outputTokens: number };
-    let modelUsed = "claude-sonnet-4-20250514";
+    let modelUsed = "gpt-5.4";
     const sysPrompt = "You are a Reddit community expert who reviews comment drafts for authenticity, rule compliance, and effectiveness. Always return valid JSON.";
 
     try {
-      result = await callClaude({ model: "claude-sonnet-4-20250514", maxTokens: 2000, systemPrompt: sysPrompt, userMessage: prompt });
-    } catch {
       const { callOpenAI } = await import("@/lib/llm/openai");
-      modelUsed = "gpt-5.4";
       result = await callOpenAI({ model: "gpt-5.4", maxTokens: 2000, systemPrompt: sysPrompt, userMessage: prompt });
+    } catch {
+      modelUsed = "claude-sonnet-4-6-20250514";
+      result = await callClaude({ model: "claude-sonnet-4-6-20250514", maxTokens: 2000, systemPrompt: sysPrompt, userMessage: prompt });
     }
 
     // Parse response

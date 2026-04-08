@@ -16,7 +16,7 @@ export function getAnthropicClient(): Anthropic {
  * Returns the text response.
  */
 export async function callClaude({
-  model = "claude-sonnet-4-20250514",
+  model = "claude-sonnet-4-6-20250514",
   systemPrompt,
   userMessage,
   maxTokens = 4096,
