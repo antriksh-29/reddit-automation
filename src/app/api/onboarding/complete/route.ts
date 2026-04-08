@@ -148,15 +148,9 @@ export async function POST(request: Request) {
         console.error("Worker embedding webhook failed (non-blocking):", err)
       );
 
-      // Trigger immediate scan so user sees posts on first dashboard load
-      fetch(`${workerUrl}/scan-now`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${workerSecret}`,
-        },
-      }).catch((err) =>
-        console.error("Worker scan-now webhook failed (non-blocking):", err)
-      );
+      // NOTE: First-scan is triggered by /onboarding/setup page, NOT here.
+      // The setup page calls /api/onboarding/first-scan → worker /first-scan
+      // which bypasses the 25-min guard and streams progress to the user.
     }
 
     return NextResponse.json({
