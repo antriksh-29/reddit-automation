@@ -148,16 +148,27 @@ export async function POST(request: Request) {
       trial_ends_at: trialEnd.toISOString(),
       credits_granted: PLANS.free.initialCredits,
     });
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    console.error("Onboarding error:", errMsg, error);
+  } catch (error: unknown) {
+    // Extract message from any error type (Error, Supabase PostgrestError, plain object)
+    let errMsg: string;
+    if (error instanceof Error) {
+      errMsg = error.message;
+    } else if (error && typeof error === "object" && "message" in error) {
+      errMsg = String((error as { message: unknown }).message);
+    } else if (error && typeof error === "object" && "code" in error) {
+      errMsg = `DB error ${(error as { code: unknown }).code}: ${JSON.stringify(error)}`;
+    } else {
+      errMsg = JSON.stringify(error);
+    }
+
+    console.error("Onboarding error:", errMsg);
 
     // Log the error to event_logs for debugging
     try {
       await admin.from("event_logs").insert({
         user_id: user.id,
         event_type: "onboarding.error",
-        event_data: { error: errMsg, stack: error instanceof Error ? error.stack?.substring(0, 500) : null },
+        event_data: { error: errMsg },
         source: "backend",
       });
     } catch { /* Don't let logging fail the error response */ }
