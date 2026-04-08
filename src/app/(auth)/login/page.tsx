@@ -29,7 +29,7 @@ export default function LoginPage() {
         <h1
           style={{
             fontFamily: "'Satoshi', system-ui, sans-serif",
-            fontSize: "56px",
+            fontSize: "58px",
             fontWeight: 700,
             color: "#E8651A",
             marginBottom: "16px",
@@ -43,7 +43,7 @@ export default function LoginPage() {
         <p
           style={{
             fontFamily: "'DM Sans', system-ui, sans-serif",
-            fontSize: "18px",
+            fontSize: "20px",
             lineHeight: 1.5,
             color: "#EDEDEB",
             marginBottom: "44px",
@@ -74,7 +74,7 @@ export default function LoginPage() {
               key={f.title}
               style={{
                 fontFamily: "'DM Sans', system-ui, sans-serif",
-                fontSize: "14.5px",
+                fontSize: "16px",
                 lineHeight: 1.6,
                 color: "#D0D0CD",
                 margin: 0,
@@ -102,7 +102,7 @@ export default function LoginPage() {
             border: "1px solid #2A2A2A",
             borderRadius: "8px",
             padding: "14px 28px",
-            fontSize: "15px",
+            fontSize: "16px",
             fontWeight: 500,
             color: "#F5F5F3",
             cursor: "pointer",
@@ -130,7 +130,7 @@ export default function LoginPage() {
         <p
           style={{
             fontFamily: "'DM Sans', system-ui, sans-serif",
-            fontSize: "12px",
+            fontSize: "13px",
             color: "#555",
             marginTop: "20px",
             lineHeight: 1.5,
